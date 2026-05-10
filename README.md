@@ -21,10 +21,10 @@ https://ollama.com/
 
 ## モデルの取得例
 
-このREADMEでは `qwen3:latest` を例にします。
+このREADMEでは `qwen3.5:9b` を例にします。
 
 ```bash
-ollama pull qwen3:latest
+ollama pull qwen3.5:9b
 ```
 
 別のモデルを使う場合は、`.env.local` の `OLLAMA_MODEL` も同じモデル名に変更してください。
@@ -68,7 +68,7 @@ Copy-Item .env.local.example .env.local
 ## .env.local の設定例
 
 ```env
-OLLAMA_MODEL=qwen3:latest
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_ENDPOINT=http://localhost:11434/api/generate
 DATABASE_URL="file:./dev.db"
 ```
@@ -169,7 +169,7 @@ PDF、画像、動画、ダウンロードファイルなどは直接診断で�
 `.env.local` を作成し、以下のようにモデル名を設定してください。
 
 ```env
-OLLAMA_MODEL=qwen3:latest
+OLLAMA_MODEL=qwen3.5:9b
 ```
 
 ### Ollamaに接続できません
@@ -193,7 +193,7 @@ ollama list
 必要なモデルがなければ取得します。
 
 ```bash
-ollama pull qwen3:latest
+ollama pull qwen3.5:9b
 ```
 
 ### LLMのJSON出力が崩れました
