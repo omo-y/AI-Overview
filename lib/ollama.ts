@@ -98,6 +98,47 @@ ${omittedLength > 0 ? `注記: 記事本文は長いため、LLMには先頭${MA
 `.trim();
 }
 
+function buildRetryPrompt(
+  article: string,
+  totalScore: number,
+  ruleScores: RuleScore[]
+) {
+  const weakScores = ruleScores
+    .filter((item) => item.score < 8)
+    .map((item) => `- ${item.item}: ${item.score}/10 ${item.comment}`)
+    .join("\n");
+  const articleExcerpt = article.slice(0, 2_000);
+
+  return `
+次の診断結果をもとに、AI Overview向けの記事改善案を作ってください。
+必ずJSONオブジェクトだけを返してください。コードフェンス、説明文、前置き、後書きは禁止です。
+配列は空にしないでください。本文情報が不足する場合も、診断結果から妥当な提案を作ってください。
+
+必須JSON形式:
+{
+  "summary": "評価サマリーを1文で書く",
+  "problems": ["改善インパクトが大きい課題を3個以上"],
+  "improvements": ["優先度が高い順の具体的な改善提案を4個以上"],
+  "faqIdeas": [
+    { "question": "質問", "answer": "回答" },
+    { "question": "質問", "answer": "回答" },
+    { "question": "質問", "answer": "回答" },
+    { "question": "質問", "answer": "回答" },
+    { "question": "質問", "answer": "回答" }
+  ],
+  "metaDescriptions": ["120文字前後の案1", "120文字前後の案2", "120文字前後の案3"]
+}
+
+総合スコア: ${totalScore}/100
+
+弱い項目:
+${weakScores || "大きく弱い項目はありません。より引用されやすくする改善案を作ってください。"}
+
+記事抜粋:
+${articleExcerpt}
+`.trim();
+}
+
 function normalizeLlmResponse(text: string): string {
   return text
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
@@ -106,20 +147,13 @@ function normalizeLlmResponse(text: string): string {
     .trim();
 }
 
-function extractJsonObject(text: string): string {
-  const normalized = normalizeLlmResponse(text);
-  const start = normalized.indexOf("{");
-
-  if (start === -1) {
-    throw new Error("LLMの回答からJSONオブジェクトを見つけられませんでした。");
-  }
-
+function extractBalancedJsonObject(text: string, start: number): string | null {
   let depth = 0;
   let inString = false;
   let isEscaped = false;
 
-  for (let index = start; index < normalized.length; index += 1) {
-    const char = normalized[index];
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
 
     if (isEscaped) {
       isEscaped = false;
@@ -148,12 +182,86 @@ function extractJsonObject(text: string): string {
       depth -= 1;
 
       if (depth === 0) {
-        return normalized.slice(start, index + 1);
+        return text.slice(start, index + 1);
       }
     }
   }
 
-  throw new Error("LLMのJSONオブジェクトが閉じられていません。");
+  return null;
+}
+
+function repairJsonCandidate(candidate: string): string {
+  return candidate
+    .replace(/,\s*([}\]])/g, "$1")
+    .replace(/^\uFEFF/, "")
+    .trim();
+}
+
+function hasExpectedLlmKeys(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return Boolean(
+    candidate.summary ||
+      candidate["評価サマリー"] ||
+      candidate["サマリー"] ||
+      candidate.problems ||
+      candidate["改善すべき点"] ||
+      candidate["課題"] ||
+      candidate.improvements ||
+      candidate["具体的な改善提案"] ||
+      candidate["改善提案"] ||
+      candidate.faqIdeas ||
+      candidate["FAQ案"] ||
+      candidate.faq ||
+      candidate.metaDescriptions ||
+      candidate["メタディスクリプション案"] ||
+      candidate.meta
+  );
+}
+
+function readProperty(
+  source: Record<string, unknown>,
+  keys: string[]
+): unknown {
+  for (const key of keys) {
+    if (key in source) {
+      return source[key];
+    }
+  }
+
+  return undefined;
+}
+
+function parseJsonFromLlmResponse(text: string): unknown {
+  const normalized = normalizeLlmResponse(text);
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    if (normalized[index] !== "{") {
+      continue;
+    }
+
+    const candidate = extractBalancedJsonObject(normalized, index);
+
+    if (!candidate) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(repairJsonCandidate(candidate));
+
+      if (hasExpectedLlmKeys(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Try the next balanced object. LLMs often include braces in prose.
+    }
+  }
+
+  throw new Error("LLMの回答から読み取り可能なJSONを見つけられませんでした。");
 }
 
 function toStringArray(value: unknown): string[] {
@@ -161,7 +269,19 @@ function toStringArray(value: unknown): string[] {
     return [];
   }
 
-  return value.filter((item): item is string => typeof item === "string");
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+
+      if (typeof item === "number" || typeof item === "boolean") {
+        return String(item);
+      }
+
+      return "";
+    })
+    .filter(Boolean);
 }
 
 function validateLlmResult(value: unknown): LlmResult {
@@ -169,29 +289,106 @@ function validateLlmResult(value: unknown): LlmResult {
     throw new Error("LLMのJSON形式が想定と異なります。");
   }
 
-  const candidate = value as Partial<LlmResult>;
-  const faqIdeas = Array.isArray(candidate.faqIdeas)
-    ? candidate.faqIdeas
+  const source = value as Record<string, unknown>;
+  const summary = readProperty(source, ["summary", "評価サマリー", "サマリー"]);
+  const problems = readProperty(source, ["problems", "改善すべき点", "課題"]);
+  const improvements = readProperty(source, [
+    "improvements",
+    "具体的な改善提案",
+    "改善提案"
+  ]);
+  const faqIdeasValue = readProperty(source, ["faqIdeas", "FAQ案", "faq"]);
+  const metaDescriptions = readProperty(source, [
+    "metaDescriptions",
+    "メタディスクリプション案",
+    "meta"
+  ]);
+
+  const faqIdeas = Array.isArray(faqIdeasValue)
+    ? faqIdeasValue
         .filter(
           (item): item is { question: string; answer: string } =>
             typeof item === "object" &&
             item !== null &&
-            typeof (item as { question?: unknown }).question === "string" &&
-            typeof (item as { answer?: unknown }).answer === "string"
+            typeof readProperty(item as Record<string, unknown>, [
+              "question",
+              "質問"
+            ]) === "string" &&
+            typeof readProperty(item as Record<string, unknown>, [
+              "answer",
+              "回答"
+            ]) === "string"
         )
+        .map((item) => ({
+          question: readProperty(item, ["question", "質問"]) as string,
+          answer: readProperty(item, ["answer", "回答"]) as string
+        }))
         .slice(0, 5)
     : [];
 
-  if (typeof candidate.summary !== "string") {
-    throw new Error("LLMのJSONにsummaryがありません。");
+  return {
+    summary:
+      typeof summary === "string"
+        ? summary
+        : "ローカルLLMの回答から一部の提案を読み取りました。",
+    problems: toStringArray(problems),
+    improvements: toStringArray(improvements),
+    faqIdeas,
+    metaDescriptions: toStringArray(metaDescriptions).slice(0, 3)
+  };
+}
+
+function hasUsefulLlmResult(result: LlmResult): boolean {
+  return Boolean(
+    result.summary.trim() &&
+      (result.problems.length > 0 ||
+        result.improvements.length > 0 ||
+        result.faqIdeas.length > 0 ||
+        result.metaDescriptions.length > 0)
+  );
+}
+
+function parseAndValidateLlmResponse(responseText: string): LlmResult {
+  const parsed = parseJsonFromLlmResponse(responseText);
+  const result = validateLlmResult(parsed);
+
+  if (!hasUsefulLlmResult(result)) {
+    throw new Error("LLMのJSONは読み取れましたが、提案内容が空でした。");
   }
 
+  return result;
+}
+
+async function requestOllamaGenerate(
+  endpoint: string,
+  model: string,
+  prompt: string,
+  signal: AbortSignal
+): Promise<OllamaGenerateResponse & { ok: boolean; status: number }> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      stream: false,
+      format: "json",
+      options: {
+        temperature: 0.2,
+        num_predict: 1000
+      }
+    }),
+    signal
+  });
+
+  const body = (await response.json().catch(() => ({}))) as OllamaGenerateResponse;
+
   return {
-    summary: candidate.summary,
-    problems: toStringArray(candidate.problems),
-    improvements: toStringArray(candidate.improvements),
-    faqIdeas,
-    metaDescriptions: toStringArray(candidate.metaDescriptions).slice(0, 3)
+    ...body,
+    ok: response.ok,
+    status: response.status
   };
 }
 
@@ -250,29 +447,16 @@ export async function generateLlmSuggestions(
   const timeoutId = setTimeout(() => controller.abort(), 180_000);
 
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        prompt: buildPrompt(article, totalScore, ruleScores),
-        stream: false,
-        format: "json",
-        options: {
-          temperature: 0.2,
-          num_predict: 1000
-        }
-      }),
-      signal: controller.signal
-    });
+    const body = await requestOllamaGenerate(
+      endpoint,
+      model,
+      buildPrompt(article, totalScore, ruleScores),
+      controller.signal
+    );
 
-    const body = (await response.json().catch(() => ({}))) as OllamaGenerateResponse;
-
-    if (!response.ok) {
+    if (!body.ok) {
       return createFallback(
-        translateOllamaError(body.error ?? `HTTP ${response.status}`)
+        translateOllamaError(body.error ?? `HTTP ${body.status}`)
       );
     }
 
@@ -280,26 +464,45 @@ export async function generateLlmSuggestions(
       return createFallback("Ollamaのレスポンスに回答本文が含まれていません。");
     }
 
-    let parsed: unknown;
-
     try {
-      parsed = JSON.parse(extractJsonObject(body.response));
-    } catch (parseError) {
-      return createParseFallback(parseError, body.response);
+      return {
+        status: "success",
+        data: parseAndValidateLlmResponse(body.response)
+      };
+    } catch (firstError) {
+      console.error("[Ollama JSON parse retry]", {
+        error: firstError,
+        rawResponse: body.response
+      });
     }
 
-    let data: LlmResult;
+    const retryBody = await requestOllamaGenerate(
+      endpoint,
+      model,
+      buildRetryPrompt(article, totalScore, ruleScores),
+      controller.signal
+    );
 
-    try {
-      data = validateLlmResult(parsed);
-    } catch (validationError) {
-      return createParseFallback(validationError, body.response);
+    if (!retryBody.ok) {
+      return createFallback(
+        translateOllamaError(retryBody.error ?? `HTTP ${retryBody.status}`)
+      );
     }
 
-    return {
-      status: "success",
-      data
-    };
+    if (!retryBody.response) {
+      return createParseFallback(
+        "Ollamaの再試行レスポンスに回答本文が含まれていません。"
+      );
+    }
+
+    try {
+      return {
+        status: "success",
+        data: parseAndValidateLlmResponse(retryBody.response)
+      };
+    } catch (retryError) {
+      return createParseFallback(retryError, retryBody.response);
+    }
   } catch (error) {
     if (error instanceof SyntaxError) {
       return createParseFallback(error);
@@ -317,11 +520,14 @@ export async function generateLlmSuggestions(
       );
     }
 
-    return createFallback(
-      error instanceof Error
-        ? error.message
-        : "Ollamaとの通信中に不明なエラーが発生しました。"
-    );
+    return {
+      status: "fallback",
+      data: parseFallbackResult,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Ollamaとの通信中に不明なエラーが発生しました。"
+    };
   } finally {
     clearTimeout(timeoutId);
   }
