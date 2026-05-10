@@ -10,6 +10,8 @@ OpenAI APIを使わず、ローカルLLMのOllamaとルールベース診断で�
 - npm
 - Ollama
 - Ollamaで使うローカルLLMモデル
+- SQLite
+- Prisma
 
 ## Ollamaのインストール
 
@@ -68,9 +70,58 @@ Copy-Item .env.local.example .env.local
 ```env
 OLLAMA_MODEL=qwen3:latest
 OLLAMA_ENDPOINT=http://localhost:11434/api/generate
+DATABASE_URL="file:./dev.db"
 ```
 
 `OLLAMA_ENDPOINT` は省略しても、標準値として `http://localhost:11434/api/generate` を使います。
+
+Prisma CLIでマイグレーションを実行する場合は、`.env` にも同じ `DATABASE_URL` を設定してください。
+
+```env
+DATABASE_URL="file:./dev.db"
+```
+
+## DB保存の準備
+
+診断履歴はブラウザのlocalStorageではなく、SQLite + Prismaに保存します。
+
+Prisma関連パッケージをインストールします。
+
+```bash
+npm install prisma @prisma/client
+```
+
+Prismaを初期化していない場合は、以下を実行します。
+
+```bash
+npx prisma init
+```
+
+このプロジェクトでは `prisma/schema.prisma` を用意済みです。`DATABASE_URL` は `.env` または `.env.local` に設定してください。
+
+```env
+DATABASE_URL="file:./dev.db"
+```
+
+マイグレーションを実行します。
+
+```bash
+npx prisma migrate dev --name init
+```
+
+Prisma Clientを生成します。通常はマイグレーション時に生成されますが、必要に応じて実行してください。
+
+```bash
+npx prisma generate
+```
+
+DB内容を確認する場合は Prisma Studio を起動します。
+
+```bash
+npx prisma studio
+```
+
+ブラウザでPrisma Studioが開き、`DiagnosisHistory` テーブルの保存内容を確認できます。
 
 ## 起動手順
 
@@ -90,7 +141,8 @@ http://localhost:3000
 2. または「本文で診断」を選び、「サンプル本文を入れる」を押す
 3. 「診断開始」を押す
 4. 総合スコア、項目別スコア表、改善提案、FAQ案、メタディスクリプション案が表示されることを確認する
-5. Ollamaが停止している状態でも、ルールベース診断結果が表示されることを確認する
+5. 画面下部の診断履歴に、最新5件の履歴が表示されることを確認する
+6. Ollamaが停止している状態でも、ルールベース診断結果が表示されることを確認する
 
 ## よくあるエラーと対処法
 
@@ -158,6 +210,21 @@ Next.jsの開発サーバーが起動しているか確認してください。
 npm run dev
 ```
 
+### 診断履歴の取得に失敗しました
+
+SQLite DBまたはPrisma Clientの準備ができていない可能性があります。
+
+```bash
+npx prisma migrate dev --name init
+npx prisma generate
+```
+
+`DATABASE_URL="file:./dev.db"` が `.env` または `.env.local` に設定されているか確認してください。
+
+### 診断履歴の保存に失敗しました
+
+診断結果自体は表示されていますが、DB保存に失敗しています。DBファイルの作成権限、Prismaのマイグレーション状態、`DATABASE_URL` を確認してください。
+
 ## ファイル構成
 
 ```text
@@ -168,10 +235,15 @@ app/
   api/
     analyze/
       route.ts
+    history/
+      route.ts
 lib/
+  prisma.ts
   ruleAnalyzer.ts
   ollama.ts
   urlContent.ts
+prisma/
+  schema.prisma
 types/
   analysis.ts
 .env.local.example
@@ -183,6 +255,9 @@ README.md
 - OpenAI APIは使っていません。
 - APIキー入力欄もありません。
 - URL診断ではHTMLを取得し、タイトル、メタディスクリプション、見出し、本文、箇条書き、表をテキスト化して診断します。
+- 診断履歴はSQLite + Prismaに保存します。
+- 履歴はDBにはすべて保存し、画面には最新5件だけ表示します。
+- 自分用MVPのためログイン機能とユーザーIDはありません。SaaS化する場合は `DiagnosisHistory` に `userId` を追加してください。
 - スコアはルールベースで固定的に計算します。
 - LLMには総合スコアを変更させません。
 - LLM呼び出しに失敗しても、ルールベース診断結果は表示されます。

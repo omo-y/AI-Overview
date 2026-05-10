@@ -78,6 +78,7 @@ export async function POST(request: Request) {
     sourceType,
     ...(sourceUrl ? { sourceUrl } : {}),
     analyzedTextLength: article.length,
+    analyzedTextPreview: article.slice(0, 100),
     ...(llmResult.status === "fallback" ? { llmError: llmResult.error } : {})
   };
 

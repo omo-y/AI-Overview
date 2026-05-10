@@ -25,6 +25,7 @@ export type AnalysisResult = LlmResult & {
   sourceType: "text" | "url";
   sourceUrl?: string;
   analyzedTextLength: number;
+  analyzedTextPreview: string;
 };
 
 export type AnalyzeErrorResponse = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AnalysisResult,
   AnalyzeErrorResponse,
@@ -8,6 +8,24 @@ import type {
 } from "@/types/analysis";
 
 type InputMode = "url" | "text";
+
+type AnalysisHistoryItem = {
+  id: number;
+  createdAt: string;
+  inputPreview: string;
+  totalScore: number;
+  summary: string;
+};
+
+type HistoryListResponse = {
+  histories: AnalysisHistoryItem[];
+  error?: string;
+};
+
+type HistoryCreateResponse = {
+  history: AnalysisHistoryItem;
+  error?: string;
+};
 
 const sampleText = `# AI Overviewに引用されやすい記事構造とは
 
@@ -131,15 +149,95 @@ function ScoreTable({ scores }: { scores: RuleScore[] }) {
   );
 }
 
+function formatAnalyzedAt(value: string): string {
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 export default function Home() {
   const [inputMode, setInputMode] = useState<InputMode>("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const characterCount = useMemo(() => text.trim().length, [text]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const response = await fetch("/api/history", {
+        method: "GET",
+        cache: "no-store"
+      });
+      const data = (await response.json()) as HistoryListResponse;
+
+      if (!response.ok) {
+        setHistoryError(
+          data.error ?? "診断履歴の取得に失敗しました。DB設定を確認してください。"
+        );
+        return;
+      }
+
+      setHistory(data.histories);
+      setHistoryError("");
+    } catch (loadError) {
+      console.error("[History load failed]", loadError);
+      setHistoryError(
+        "診断履歴の取得に失敗しました。DB接続とPrisma設定を確認してください。"
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      void loadHistory();
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [loadHistory]);
+
+  async function saveHistoryItem(analysisResult: AnalysisResult) {
+    try {
+      const response = await fetch("/api/history", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          inputPreview:
+            analysisResult.analyzedTextPreview.trim() ||
+            (inputMode === "url" ? url.trim() : text.trim()).slice(0, 100),
+          totalScore: analysisResult.totalScore,
+          summary: analysisResult.summary
+        })
+      });
+      const data = (await response.json()) as HistoryCreateResponse;
+
+      if (!response.ok) {
+        setHistoryError(
+          data.error ??
+            "診断履歴の保存に失敗しました。診断結果は表示されていますが、履歴には残っていません。"
+        );
+        return;
+      }
+
+      setHistoryError("");
+      await loadHistory();
+    } catch (saveError) {
+      console.error("[History save failed]", saveError);
+      setHistoryError(
+        "診断履歴の保存に失敗しました。診断結果は表示されていますが、履歴には残っていません。"
+      );
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -179,7 +277,9 @@ export default function Home() {
         return;
       }
 
-      setResult(data as AnalysisResult);
+      const analysisResult = data as AnalysisResult;
+      setResult(analysisResult);
+      await saveHistoryItem(analysisResult);
     } catch {
       setError("通信エラーが発生しました。開発サーバーの状態を確認してください。");
     } finally {
@@ -518,6 +618,67 @@ export default function Home() {
             ) : null}
           </section>
         </div>
+
+        <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-ink">診断履歴</h2>
+              <p className="mt-1 text-sm text-muted">
+                SQLiteに保存された最新5件の診断履歴です。
+              </p>
+            </div>
+            <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+              SQLite + Prisma
+            </span>
+          </div>
+
+          {historyError ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              {historyError}
+            </div>
+          ) : null}
+
+          {history.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
+              まだ診断履歴はありません。
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
+                    <th className="px-4 py-3 font-semibold">日時</th>
+                    <th className="px-4 py-3 font-semibold">入力プレビュー</th>
+                    <th className="w-28 px-4 py-3 text-right font-semibold">
+                      スコア
+                    </th>
+                    <th className="px-4 py-3 font-semibold">サマリー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((item) => (
+                    <tr key={item.id} className="border-b border-line last:border-0">
+                      <td className="whitespace-nowrap px-4 py-4 text-muted">
+                        {formatAnalyzedAt(item.createdAt)}
+                      </td>
+                      <td className="max-w-[280px] px-4 py-4 font-medium leading-6 text-ink">
+                        {item.inputPreview}
+                      </td>
+                      <td className="px-4 py-4 text-right">
+                        <span className={`font-bold ${getScoreTone(item.totalScore)}`}>
+                          {item.totalScore}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 leading-6 text-muted">
+                        {item.summary}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
