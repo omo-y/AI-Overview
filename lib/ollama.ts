@@ -18,6 +18,8 @@ type OllamaFallback = {
 
 export type OllamaAnalysisResult = OllamaSuccess | OllamaFallback;
 
+const MAX_LLM_ARTICLE_CHARS = 6_000;
+
 const baseFallbackResult: LlmResult = {
   summary:
     "ルールベース診断のみ完了しました。ローカルLLMの回答を取得できなかったため、改善提案は簡易表示です。",
@@ -39,7 +41,18 @@ const baseFallbackResult: LlmResult = {
   ]
 };
 
+const parseFallbackResult: LlmResult = {
+  summary:
+    "ルールベース診断のみ完了しました。ローカルLLMの出力形式を読み取れなかったため、提案項目は表示できませんでした。",
+  problems: [],
+  improvements: [],
+  faqIdeas: [],
+  metaDescriptions: []
+};
+
 function buildPrompt(article: string, totalScore: number, ruleScores: RuleScore[]) {
+  const articleForLlm = article.slice(0, MAX_LLM_ARTICLE_CHARS);
+  const omittedLength = article.length - articleForLlm.length;
   const ruleSummary = ruleScores
     .map((item) => `- ${item.item}: ${item.score}/10 ${item.comment}`)
     .join("\n");
@@ -55,6 +68,8 @@ function buildPrompt(article: string, totalScore: number, ruleScores: RuleScore[
 - Markdown、説明文、コードフェンス、前置き、後書きは出力しない
 - faqIdeasは必ず5個
 - metaDescriptionsは必ず3個
+- improvementsは重要度が高い順に並べる
+- problemsは改善インパクトが大きい順に並べる
 - 日本語で具体的に書く
 
 返却JSON形式:
@@ -77,20 +92,68 @@ function buildPrompt(article: string, totalScore: number, ruleScores: RuleScore[
 ${ruleSummary}
 
 記事本文:
-${article}
+${articleForLlm}
+
+${omittedLength > 0 ? `注記: 記事本文は長いため、LLMには先頭${MAX_LLM_ARTICLE_CHARS.toLocaleString("ja-JP")}文字のみ渡しています。省略文字数: ${omittedLength.toLocaleString("ja-JP")}文字。` : ""}
 `.trim();
 }
 
-function extractJsonObject(text: string): string {
-  const withoutThinkBlocks = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  const start = withoutThinkBlocks.indexOf("{");
-  const end = withoutThinkBlocks.lastIndexOf("}");
+function normalizeLlmResponse(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/```(?:json|JSON)?/g, "")
+    .replace(/```/g, "")
+    .trim();
+}
 
-  if (start === -1 || end === -1 || end <= start) {
+function extractJsonObject(text: string): string {
+  const normalized = normalizeLlmResponse(text);
+  const start = normalized.indexOf("{");
+
+  if (start === -1) {
     throw new Error("LLMの回答からJSONオブジェクトを見つけられませんでした。");
   }
 
-  return withoutThinkBlocks.slice(start, end + 1);
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = start; index < normalized.length; index += 1) {
+    const char = normalized[index];
+
+    if (isEscaped) {
+      isEscaped = false;
+      continue;
+    }
+
+    if (inString && char === "\\") {
+      isEscaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        return normalized.slice(start, index + 1);
+      }
+    }
+  }
+
+  throw new Error("LLMのJSONオブジェクトが閉じられていません。");
 }
 
 function toStringArray(value: unknown): string[] {
@@ -133,13 +196,30 @@ function validateLlmResult(value: unknown): LlmResult {
 }
 
 function createFallback(error: string): OllamaFallback {
+  console.error("[Ollama fallback]", error);
+
   return {
     status: "fallback",
     data: {
       ...baseFallbackResult,
+      summary: `ルールベース診断のみ完了しました。ローカルLLMの回答を取得できなかった理由: ${error}`,
       problems: [error, ...baseFallbackResult.problems]
     },
     error
+  };
+}
+
+function createParseFallback(error: unknown, rawResponse?: string): OllamaFallback {
+  console.error("[Ollama JSON parse fallback]", {
+    error,
+    rawResponse
+  });
+
+  return {
+    status: "fallback",
+    data: parseFallbackResult,
+    error:
+      "LLMのJSON出力が崩れたため、ルールベース診断のみ表示します。もう一度診断するか、別のモデルを試してください。"
   };
 }
 
@@ -200,16 +280,29 @@ export async function generateLlmSuggestions(
       return createFallback("Ollamaのレスポンスに回答本文が含まれていません。");
     }
 
-    const parsed = JSON.parse(extractJsonObject(body.response));
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(extractJsonObject(body.response));
+    } catch (parseError) {
+      return createParseFallback(parseError, body.response);
+    }
+
+    let data: LlmResult;
+
+    try {
+      data = validateLlmResult(parsed);
+    } catch (validationError) {
+      return createParseFallback(validationError, body.response);
+    }
+
     return {
       status: "success",
-      data: validateLlmResult(parsed)
+      data
     };
   } catch (error) {
     if (error instanceof SyntaxError) {
-      return createFallback(
-        "LLMのJSON出力が崩れたため、ルールベース診断のみ表示します。"
-      );
+      return createParseFallback(error);
     }
 
     if (error instanceof Error && error.name === "AbortError") {
