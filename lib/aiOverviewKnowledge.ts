@@ -47,6 +47,49 @@ const PREVIEW_BLOCKING_KEYWORDS = [
   "noindex"
 ];
 
+const HOW_TO_KEYWORDS = [
+  "手順",
+  "流れ",
+  "ステップ",
+  "方法",
+  "やり方",
+  "始め方",
+  "導入",
+  "実装",
+  "確認",
+  "注意点"
+];
+
+const ORIGINALITY_KEYWORDS = [
+  "独自",
+  "自社",
+  "実例",
+  "事例",
+  "検証",
+  "調査",
+  "データ",
+  "体験",
+  "経験",
+  "実績",
+  "監修",
+  "専門家",
+  "公式"
+];
+
+const SEO_AIO_BALANCE_KEYWORDS = [
+  "タイトル",
+  "メタディスクリプション",
+  "見出し",
+  "内部リンク",
+  "関連",
+  "検索意図",
+  "キーワード",
+  "要約",
+  "結論",
+  "FAQ",
+  "構造化データ"
+];
+
 function countMatches(text: string, keywords: string[]): number {
   return keywords.filter((keyword) =>
     text.toLowerCase().includes(keyword.toLowerCase())
@@ -95,6 +138,58 @@ export function scoreAiOverviewOfficialGuidance(text: string): RuleScore {
     item: "AI Overviews公式方針",
     score,
     comment: comments.join(" ")
+  };
+}
+
+export function scoreHowToStructure(text: string): RuleScore {
+  const matchedCount = countMatches(text, HOW_TO_KEYWORDS);
+  const orderedStepCount =
+    text.match(/(?:^|\n)\s*(?:\d+[.)]|Step\s*\d+|STEP\s*\d+)/g)?.length ?? 0;
+  const score = clampScore(matchedCount * 1.4 + orderedStepCount * 2);
+
+  return {
+    item: "How-to・手順構造",
+    score,
+    comment:
+      score >= 7
+        ? "手順、流れ、注意点などのHow-to要素を検出しました。AI検索が実行手順として整理しやすい構造です。"
+        : "手順、流れ、注意点などのHow-to要素が弱い状態です。作業ステップや確認ポイントを追加すると改善できます。"
+  };
+}
+
+export function scoreOriginalityAndPrimaryValue(text: string): RuleScore {
+  const matchedCount = countMatches(text, ORIGINALITY_KEYWORDS);
+  const score = clampScore(matchedCount * 1.2);
+
+  return {
+    item: "独自性・一次性",
+    score,
+    comment:
+      score >= 7
+        ? "独自データ、事例、経験、監修、公式情報など一次性を補強する要素を検出しました。"
+        : "独自調査、自社データ、実例、経験、監修、公式情報などの一次性を示す要素を追加すると改善できます。"
+  };
+}
+
+export function scoreSeoAioBalance(text: string): RuleScore {
+  const matchedCount = countMatches(text, SEO_AIO_BALANCE_KEYWORDS);
+  const hasTitleLikeHeading = /^#\s+.+$/m.test(text);
+  const hasSummaryBlock =
+    text.includes("この記事でわかること") ||
+    text.includes("要約") ||
+    text.includes("まとめ") ||
+    text.includes("結論");
+  const score = clampScore(
+    matchedCount * 0.9 + (hasTitleLikeHeading ? 1.5 : 0) + (hasSummaryBlock ? 2 : 0)
+  );
+
+  return {
+    item: "SEO/AIO両立",
+    score,
+    comment:
+      score >= 7
+        ? "タイトル、見出し、検索意図、要約、FAQなどSEOとAIOの両方に関わる要素を検出しました。"
+        : "SEOとAIOの両立要素が弱い状態です。タイトル、検索意図、関連トピック、要約、内部リンクを整理すると改善できます。"
   };
 }
 

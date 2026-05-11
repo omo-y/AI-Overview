@@ -1,5 +1,10 @@
 import type { RuleScore } from "@/types/analysis";
-import { scoreAiOverviewOfficialGuidance } from "@/lib/aiOverviewKnowledge";
+import {
+  scoreAiOverviewOfficialGuidance,
+  scoreHowToStructure,
+  scoreOriginalityAndPrimaryValue,
+  scoreSeoAioBalance
+} from "@/lib/aiOverviewKnowledge";
 
 type RuleAnalysis = {
   totalScore: number;
@@ -231,7 +236,10 @@ export function analyzeRules(text: string): RuleAnalysis {
     scoreEvidence(normalizedText),
     scoreEeat(normalizedText),
     scoreStructuredElements(normalizedText),
-    scoreAiOverviewOfficialGuidance(normalizedText)
+    scoreAiOverviewOfficialGuidance(normalizedText),
+    scoreHowToStructure(normalizedText),
+    scoreOriginalityAndPrimaryValue(normalizedText),
+    scoreSeoAioBalance(normalizedText)
   ];
 
   const totalScore = Math.round(
