@@ -159,11 +159,11 @@ function scoreFaq(text: string): RuleScore {
   const found = hasAnyKeyword(text, faqKeywords);
 
   return {
-    item: "FAQ",
+    item: "FAQ・Q&A本文構造",
     score: found ? 10 : 2,
     comment: found
-      ? "FAQまたは質問形式の要素を検出しました。"
-      : "FAQ要素が見つかりませんでした。Q&A形式を追加するとAI検索と相性がよくなります。"
+      ? "FAQまたは質問形式の要素を検出しました。FAQリッチリザルト目的ではなく、AI検索が質問と回答の対応関係を理解しやすくする本文構造として評価します。"
+      : "FAQ要素が見つかりませんでした。FAQリッチリザルト目的ではなく、読者の疑問に答えるQ&A本文構造を追加するとAI検索向けに改善できます。"
   };
 }
 
@@ -212,8 +212,8 @@ function scoreStructuredElements(text: string): RuleScore {
     score: clampScore(matchedCount * 2),
     comment:
       matchedCount === 0
-        ? "FAQ、表、Q&A、箇条書きなどの構造化しやすい要素が不足しています。"
-        : `${matchedCount}種類の構造化しやすい要素を検出しました。`
+        ? "表、Q&A、箇条書きなど、AIが本文構造を把握しやすい要素が不足しています。"
+        : `${matchedCount}種類の構造化しやすい要素を検出しました。FAQPageリッチリザルトではなく、本文理解を助ける構造として評価します。`
   };
 }
 

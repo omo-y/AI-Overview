@@ -34,7 +34,10 @@ const QUERY_FAN_OUT_KEYWORDS = [
   "注意点",
   "事例",
   "FAQ",
-  "よくある質問"
+  "よくある質問",
+  "Q.",
+  "Q：",
+  "質問"
 ];
 
 const PREVIEW_BLOCKING_KEYWORDS = [
@@ -84,8 +87,8 @@ export function scoreAiOverviewOfficialGuidance(text: string): RuleScore {
       ? "公式情報や出典など、信頼性を補強する要素があります。"
       : "公式情報、出典、データなどの根拠を追加すると改善できます。",
     fanOutCount > 0
-      ? "比較、費用、手順、FAQなど関連探索に広がる要素があります。"
-      : "query fan-outを意識し、比較、費用、選び方、FAQなど周辺トピックを補うと改善できます。"
+      ? "比較、費用、手順、Q&Aなど関連探索に広がる要素があります。FAQはリッチリザルト目的ではなく、AIが質問意図を理解しやすい本文構造として評価します。"
+      : "query fan-outを意識し、比較、費用、選び方、Q&Aなど周辺トピックを補うと改善できます。FAQリッチリザルト目的の構造化データ評価は重視しません。"
   ];
 
   return {
@@ -97,5 +100,6 @@ export function scoreAiOverviewOfficialGuidance(text: string): RuleScore {
 
 export const aiOverviewGuidanceSources = [
   "Google Search Central: AI features and your website",
-  "Google Search Central: Robots meta tags, nosnippet, max-snippet"
+  "Google Search Central: Robots meta tags, nosnippet, max-snippet",
+  "Google Search Central: FAQ rich results deprecation notice, May 7 2026"
 ];
