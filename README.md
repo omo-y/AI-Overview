@@ -244,6 +244,7 @@ app/
     history/
       route.ts
 lib/
+  aiOverviewKnowledge.ts
   prisma.ts
   ruleAnalyzer.ts
   ollama.ts
@@ -261,6 +262,8 @@ README.md
 - OpenAI APIは使っていません。
 - APIキー入力欄もありません。
 - URL診断ではHTMLを取得し、タイトル、メタディスクリプション、見出し、本文、箇条書き、表をテキスト化して診断します。
+- Google Search CentralのAI Overviews / AI Mode向け公式方針を、ローカルの診断ルールとして反映しています。
+- 診断実行ごとの外部検索は行わず、安定性を優先して公式情報ベースの固定ルールを使います。
 - 診断履歴はSQLite + Prismaに保存します。
 - 履歴はDBにはすべて保存し、画面には最新5件だけ表示します。
 - URL診断の場合は診断URLも履歴に保存します。本文入力の場合は「本文入力」と表示します。
