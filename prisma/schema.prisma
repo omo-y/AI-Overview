@@ -11,6 +11,7 @@ model DiagnosisHistory {
   id           Int      @id @default(autoincrement())
   createdAt    DateTime @default(now())
   inputPreview String
+  sourceUrl    String?
   totalScore   Int
   summary      String
 

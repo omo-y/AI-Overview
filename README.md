@@ -21,10 +21,10 @@ https://ollama.com/
 
 ## モデルの取得例
 
-このREADMEでは `qwen3.5:9b` を例にします。
+このREADMEでは `qwen3:latest` を例にします。
 
 ```bash
-ollama pull qwen3.5:9b
+ollama pull qwen3:latest
 ```
 
 別のモデルを使う場合は、`.env.local` の `OLLAMA_MODEL` も同じモデル名に変更してください。
@@ -68,7 +68,7 @@ Copy-Item .env.local.example .env.local
 ## .env.local の設定例
 
 ```env
-OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_MODEL=qwen3:latest
 OLLAMA_ENDPOINT=http://localhost:11434/api/generate
 DATABASE_URL="file:./dev.db"
 ```
@@ -109,6 +109,12 @@ DATABASE_URL="file:./dev.db"
 npx prisma migrate dev --name init
 ```
 
+既にDB作成済みで、診断履歴に診断URL列を追加する場合は、追加マイグレーションを実行します。
+
+```bash
+npx prisma migrate dev --name add_source_url_to_diagnosis_history
+```
+
 Prisma Clientを生成します。通常はマイグレーション時に生成されますが、必要に応じて実行してください。
 
 ```bash
@@ -141,7 +147,7 @@ http://localhost:3000
 2. または「本文で診断」を選び、「サンプル本文を入れる」を押す
 3. 「診断開始」を押す
 4. 総合スコア、項目別スコア表、改善提案、FAQ案、メタディスクリプション案が表示されることを確認する
-5. 画面下部の診断履歴に、最新5件の履歴が表示されることを確認する
+5. 画面下部の診断履歴に、最新5件の履歴と診断URLが表示されることを確認する
 6. Ollamaが停止している状態でも、ルールベース診断結果が表示されることを確認する
 
 ## よくあるエラーと対処法
@@ -169,7 +175,7 @@ PDF、画像、動画、ダウンロードファイルなどは直接診断で�
 `.env.local` を作成し、以下のようにモデル名を設定してください。
 
 ```env
-OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_MODEL=qwen3:latest
 ```
 
 ### Ollamaに接続できません
@@ -193,7 +199,7 @@ ollama list
 必要なモデルがなければ取得します。
 
 ```bash
-ollama pull qwen3.5:9b
+ollama pull qwen3:latest
 ```
 
 ### LLMのJSON出力が崩れました
@@ -257,6 +263,7 @@ README.md
 - URL診断ではHTMLを取得し、タイトル、メタディスクリプション、見出し、本文、箇条書き、表をテキスト化して診断します。
 - 診断履歴はSQLite + Prismaに保存します。
 - 履歴はDBにはすべて保存し、画面には最新5件だけ表示します。
+- URL診断の場合は診断URLも履歴に保存します。本文入力の場合は「本文入力」と表示します。
 - 自分用MVPのためログイン機能とユーザーIDはありません。SaaS化する場合は `DiagnosisHistory` に `userId` を追加してください。
 - スコアはルールベースで固定的に計算します。
 - LLMには総合スコアを変更させません。

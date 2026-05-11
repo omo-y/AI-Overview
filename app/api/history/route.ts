@@ -4,9 +4,11 @@ import { prisma } from "@/lib/prisma";
 const HISTORY_LIMIT = 5;
 const INPUT_PREVIEW_LIMIT = 100;
 const SUMMARY_LIMIT = 500;
+const SOURCE_URL_LIMIT = 1000;
 
 type HistoryRequestBody = {
   inputPreview?: unknown;
+  sourceUrl?: unknown;
   totalScore?: unknown;
   summary?: unknown;
 };
@@ -15,6 +17,7 @@ type HistoryResponseItem = {
   id: number;
   createdAt: string;
   inputPreview: string;
+  sourceUrl: string | null;
   totalScore: number;
   summary: string;
 };
@@ -23,6 +26,7 @@ function toHistoryResponse(history: {
   id: number;
   createdAt: Date;
   inputPreview: string;
+  sourceUrl: string | null;
   totalScore: number;
   summary: string;
 }): HistoryResponseItem {
@@ -30,6 +34,7 @@ function toHistoryResponse(history: {
     id: history.id,
     createdAt: history.createdAt.toISOString(),
     inputPreview: history.inputPreview,
+    sourceUrl: history.sourceUrl,
     totalScore: history.totalScore,
     summary: history.summary
   };
@@ -103,6 +108,10 @@ export async function POST(request: Request) {
     const history = await prisma.diagnosisHistory.create({
       data: {
         inputPreview: clampText(body.inputPreview, INPUT_PREVIEW_LIMIT),
+        sourceUrl:
+          typeof body.sourceUrl === "string" && body.sourceUrl.trim().length > 0
+            ? clampText(body.sourceUrl, SOURCE_URL_LIMIT)
+            : null,
         totalScore: Math.round(body.totalScore),
         summary: clampText(body.summary, SUMMARY_LIMIT)
       }

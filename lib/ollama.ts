@@ -2,6 +2,7 @@ import type { LlmResult, RuleScore } from "@/types/analysis";
 
 type OllamaGenerateResponse = {
   response?: string;
+  thinking?: string;
   error?: string;
 };
 
@@ -18,7 +19,9 @@ type OllamaFallback = {
 
 export type OllamaAnalysisResult = OllamaSuccess | OllamaFallback;
 
-const MAX_LLM_ARTICLE_CHARS = 6_000;
+const MAX_LLM_ARTICLE_CHARS = 3_500;
+const OLLAMA_TIMEOUT_MS = 300_000;
+const OLLAMA_NUM_PREDICT = 1200;
 
 const baseFallbackResult: LlmResult = {
   summary:
@@ -359,6 +362,10 @@ function parseAndValidateLlmResponse(responseText: string): LlmResult {
   return result;
 }
 
+function getOllamaResponseText(body: OllamaGenerateResponse): string {
+  return (body.response || body.thinking || "").trim();
+}
+
 async function requestOllamaGenerate(
   endpoint: string,
   model: string,
@@ -374,10 +381,11 @@ async function requestOllamaGenerate(
       model,
       prompt,
       stream: false,
+      think: false,
       format: "json",
       options: {
         temperature: 0.2,
-        num_predict: 1000
+          num_predict: OLLAMA_NUM_PREDICT
       }
     }),
     signal
@@ -444,7 +452,7 @@ export async function generateLlmSuggestions(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180_000);
+  const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
 
   try {
     const body = await requestOllamaGenerate(
@@ -460,19 +468,17 @@ export async function generateLlmSuggestions(
       );
     }
 
-    if (!body.response) {
-      return createFallback("Ollamaのレスポンスに回答本文が含まれていません。");
-    }
+    const responseText = getOllamaResponseText(body);
 
     try {
       return {
         status: "success",
-        data: parseAndValidateLlmResponse(body.response)
+        data: parseAndValidateLlmResponse(responseText)
       };
     } catch (firstError) {
       console.error("[Ollama JSON parse retry]", {
         error: firstError,
-        rawResponse: body.response
+        rawResponse: body
       });
     }
 
@@ -489,7 +495,9 @@ export async function generateLlmSuggestions(
       );
     }
 
-    if (!retryBody.response) {
+    const retryResponseText = getOllamaResponseText(retryBody);
+
+    if (!retryResponseText) {
       return createParseFallback(
         "Ollamaの再試行レスポンスに回答本文が含まれていません。"
       );
@@ -498,10 +506,10 @@ export async function generateLlmSuggestions(
     try {
       return {
         status: "success",
-        data: parseAndValidateLlmResponse(retryBody.response)
+        data: parseAndValidateLlmResponse(retryResponseText)
       };
     } catch (retryError) {
-      return createParseFallback(retryError, retryBody.response);
+      return createParseFallback(retryError, JSON.stringify(retryBody));
     }
   } catch (error) {
     if (error instanceof SyntaxError) {
@@ -510,7 +518,7 @@ export async function generateLlmSuggestions(
 
     if (error instanceof Error && error.name === "AbortError") {
       return createFallback(
-        "Ollamaの応答がタイムアウトしました。モデルの起動状況やPCの負荷を確認してください。"
+        "Ollamaの応答がタイムアウトしました。qwen3.5:9bの初回起動や長文診断では時間がかかるため、もう一度診断するか、Ollamaを事前に起動してから試してください。"
       );
     }
 

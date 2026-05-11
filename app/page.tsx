@@ -13,6 +13,7 @@ type AnalysisHistoryItem = {
   id: number;
   createdAt: string;
   inputPreview: string;
+  sourceUrl: string | null;
   totalScore: number;
   summary: string;
 };
@@ -215,6 +216,7 @@ export default function Home() {
           inputPreview:
             analysisResult.analyzedTextPreview.trim() ||
             (inputMode === "url" ? url.trim() : text.trim()).slice(0, 100),
+          sourceUrl: analysisResult.sourceUrl ?? null,
           totalScore: analysisResult.totalScore,
           summary: analysisResult.summary
         })
@@ -644,10 +646,11 @@ export default function Home() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+              <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
                     <th className="px-4 py-3 font-semibold">日時</th>
+                    <th className="px-4 py-3 font-semibold">診断URL</th>
                     <th className="px-4 py-3 font-semibold">入力プレビュー</th>
                     <th className="w-28 px-4 py-3 text-right font-semibold">
                       スコア
@@ -660,6 +663,21 @@ export default function Home() {
                     <tr key={item.id} className="border-b border-line last:border-0">
                       <td className="whitespace-nowrap px-4 py-4 text-muted">
                         {formatAnalyzedAt(item.createdAt)}
+                      </td>
+                      <td className="max-w-[260px] px-4 py-4">
+                        {item.sourceUrl ? (
+                          <a
+                            href={item.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate font-medium text-accent underline"
+                            title={item.sourceUrl}
+                          >
+                            {item.sourceUrl}
+                          </a>
+                        ) : (
+                          <span className="text-muted">本文入力</span>
+                        )}
                       </td>
                       <td className="max-w-[280px] px-4 py-4 font-medium leading-6 text-ink">
                         {item.inputPreview}
