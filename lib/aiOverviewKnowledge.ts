@@ -90,6 +90,35 @@ const SEO_AIO_BALANCE_KEYWORDS = [
   "構造化データ"
 ];
 
+const INTRO_EVIDENCE_KEYWORDS = [
+  "要点",
+  "この記事でわかること",
+  "結論",
+  "根拠",
+  "出典",
+  "公式",
+  "参考",
+  "引用",
+  "データ"
+];
+
+const ALTERNATIVE_EXCEPTION_KEYWORDS = [
+  "代替",
+  "別の方法",
+  "例外",
+  "できない場合",
+  "失敗",
+  "注意点",
+  "ただし",
+  "一方で",
+  "ケース",
+  "パターン",
+  "強み",
+  "弱み",
+  "メリット",
+  "デメリット"
+];
+
 function countMatches(text: string, keywords: string[]): number {
   return keywords.filter((keyword) =>
     text.toLowerCase().includes(keyword.toLowerCase())
@@ -190,6 +219,40 @@ export function scoreSeoAioBalance(text: string): RuleScore {
       score >= 7
         ? "タイトル、見出し、検索意図、要約、FAQなどSEOとAIOの両方に関わる要素を検出しました。"
         : "SEOとAIOの両立要素が弱い状態です。タイトル、検索意図、関連トピック、要約、内部リンクを整理すると改善できます。"
+  };
+}
+
+export function scoreIntroKeyPointsAndEvidence(text: string): RuleScore {
+  const intro = text.slice(0, 700);
+  const introKeywordCount = countMatches(intro, INTRO_EVIDENCE_KEYWORDS);
+  const introBulletCount =
+    intro.match(/^(\s*[-*]\s+|\s*・|\s*\d+[.)]\s+).+$/gm)?.length ?? 0;
+  const hasLinkLikeText = /https?:\/\/|出典|参考|引用|公式/.test(intro);
+  const score = clampScore(
+    introKeywordCount * 1.5 + introBulletCount * 1.5 + (hasLinkLikeText ? 2 : 0)
+  );
+
+  return {
+    item: "冒頭の要点・根拠ブロック",
+    score,
+    comment:
+      score >= 7
+        ? "冒頭に要点、結論、根拠、箇条書きなどがまとまっています。AI Overviewsが要約しやすい導入構造です。"
+        : "冒頭の要点・根拠ブロックが弱い状態です。結論、要点の箇条書き、根拠リンクを冒頭にまとめると改善できます。"
+  };
+}
+
+export function scoreAlternativesAndExceptions(text: string): RuleScore {
+  const matchedCount = countMatches(text, ALTERNATIVE_EXCEPTION_KEYWORDS);
+  const score = clampScore(matchedCount * 1.1);
+
+  return {
+    item: "代替案・例外対応",
+    score,
+    comment:
+      score >= 7
+        ? "代替案、例外、注意点、強み・弱みなど、追従質問に備える要素を検出しました。"
+        : "代替案、例外、できない場合、注意点、強み・弱みなどを追加すると、AI検索の追加質問に対応しやすくなります。"
   };
 }
 
