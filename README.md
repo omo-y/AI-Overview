@@ -243,6 +243,8 @@ app/
       route.ts
     history/
       route.ts
+      top-sites/
+        route.ts
 lib/
   aiOverviewKnowledge.ts
   prisma.ts
@@ -270,6 +272,7 @@ README.md
 - 診断履歴はSQLite + Prismaに保存します。
 - 履歴はDBにはすべて保存し、画面には最新5件だけ表示します。
 - URL診断の場合は診断URLも履歴に保存します。本文入力の場合は「本文入力」と表示します。
+- 診断データ表示は「診断履歴」と「高スコアサイト5選」をタブで切り替えできます。高スコアサイト5選はURL診断履歴だけを対象にし、同じURLは最高スコアの1件だけ表示します。
 - 自分用MVPのためログイン機能とユーザーIDはありません。SaaS化する場合は `DiagnosisHistory` に `userId` を追加してください。
 - スコアはルールベースで固定的に計算します。
 - LLMには総合スコアを変更させません。

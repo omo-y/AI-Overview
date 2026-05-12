@@ -28,6 +28,17 @@ type HistoryCreateResponse = {
   error?: string;
 };
 
+type TopSiteItem = AnalysisHistoryItem & {
+  sourceUrl: string;
+};
+
+type TopSitesResponse = {
+  sites: TopSiteItem[];
+  error?: string;
+};
+
+type HistoryViewMode = "recent" | "topSites";
+
 const sampleText = `# AI Overviewに引用されやすい記事構造とは
 
 結論として、AI検索に引用されやすい記事は、冒頭で答えを示し、見出しごとに質問へ明確に回答している記事です。
@@ -166,6 +177,9 @@ export default function Home() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
+  const [topSites, setTopSites] = useState<TopSiteItem[]>([]);
+  const [historyViewMode, setHistoryViewMode] =
+    useState<HistoryViewMode>("recent");
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -197,13 +211,43 @@ export default function Home() {
     }
   }, []);
 
+  const loadTopSites = useCallback(async () => {
+    try {
+      const response = await fetch("/api/history/top-sites", {
+        method: "GET",
+        cache: "no-store"
+      });
+      const data = (await response.json()) as TopSitesResponse;
+
+      if (!response.ok) {
+        setHistoryError(
+          data.error ??
+            "高スコアサイト5選の取得に失敗しました。DB設定を確認してください。"
+        );
+        return;
+      }
+
+      setTopSites(data.sites);
+      setHistoryError("");
+    } catch (loadError) {
+      console.error("[Top sites load failed]", loadError);
+      setHistoryError(
+        "高スコアサイト5選の取得に失敗しました。DB接続とPrisma設定を確認してください。"
+      );
+    }
+  }, []);
+
+  const refreshHistoryViews = useCallback(async () => {
+    await Promise.all([loadHistory(), loadTopSites()]);
+  }, [loadHistory, loadTopSites]);
+
   useEffect(() => {
     const timerId = window.setTimeout(() => {
-      void loadHistory();
+      void refreshHistoryViews();
     }, 0);
 
     return () => window.clearTimeout(timerId);
-  }, [loadHistory]);
+  }, [refreshHistoryViews]);
 
   async function saveHistoryItem(analysisResult: AnalysisResult) {
     try {
@@ -232,7 +276,7 @@ export default function Home() {
       }
 
       setHistoryError("");
-      await loadHistory();
+      await refreshHistoryViews();
     } catch (saveError) {
       console.error("[History save failed]", saveError);
       setHistoryError(
@@ -622,16 +666,42 @@ export default function Home() {
         </div>
 
         <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-lg font-bold text-ink">診断履歴</h2>
+              <h2 className="text-lg font-bold text-ink">診断データ</h2>
               <p className="mt-1 text-sm text-muted">
-                SQLiteに保存された最新5件の診断履歴です。
+                SQLiteに保存された履歴を、最新順または高スコア順で確認できます。
               </p>
             </div>
-            <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
-              SQLite + Prisma
-            </span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setHistoryViewMode("recent")}
+                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                    historyViewMode === "recent"
+                      ? "bg-white text-accent shadow-sm"
+                      : "text-muted hover:text-ink"
+                  }`}
+                >
+                  診断履歴
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryViewMode("topSites")}
+                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                    historyViewMode === "topSites"
+                      ? "bg-white text-accent shadow-sm"
+                      : "text-muted hover:text-ink"
+                  }`}
+                >
+                  高スコアサイト5選
+                </button>
+              </div>
+              <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+                SQLite + Prisma
+              </span>
+            </div>
           </div>
 
           {historyError ? (
@@ -640,11 +710,13 @@ export default function Home() {
             </div>
           ) : null}
 
-          {history.length === 0 ? (
+          {historyViewMode === "recent" && history.length === 0 ? (
             <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
               まだ診断履歴はありません。
             </div>
-          ) : (
+          ) : null}
+
+          {historyViewMode === "recent" && history.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
                 <thead>
@@ -695,7 +767,70 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
-          )}
+          ) : null}
+
+          {historyViewMode === "topSites" && topSites.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
+              URL診断の履歴がまだありません。
+            </div>
+          ) : null}
+
+          {historyViewMode === "topSites" && topSites.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[880px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
+                    <th className="w-20 px-4 py-3 text-right font-semibold">
+                      順位
+                    </th>
+                    <th className="w-28 px-4 py-3 text-right font-semibold">
+                      スコア
+                    </th>
+                    <th className="px-4 py-3 font-semibold">診断URL</th>
+                    <th className="px-4 py-3 font-semibold">サマリー</th>
+                    <th className="whitespace-nowrap px-4 py-3 font-semibold">
+                      診断日時
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topSites.map((site, index) => (
+                    <tr key={site.id} className="border-b border-line last:border-0">
+                      <td className="px-4 py-4 text-right font-bold text-muted">
+                        {index + 1}
+                      </td>
+                      <td className="px-4 py-4 text-right">
+                        <span
+                          className={`text-lg font-bold ${getScoreTone(
+                            site.totalScore
+                          )}`}
+                        >
+                          {site.totalScore}
+                        </span>
+                      </td>
+                      <td className="max-w-[320px] px-4 py-4">
+                        <a
+                          href={site.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block truncate font-medium text-accent underline"
+                          title={site.sourceUrl}
+                        >
+                          {site.sourceUrl}
+                        </a>
+                      </td>
+                      <td className="px-4 py-4 leading-6 text-muted">
+                        {site.summary}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-muted">
+                        {formatAnalyzedAt(site.createdAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </section>
       </div>
     </main>
