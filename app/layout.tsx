@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI Overview診断ツール",
-  description: "ローカルLLMとルールベースで記事構造を診断する自分用MVP"
+  description:
+    "ローカルLLMとルールベースで記事構造を診断する自分用MVP"
 };
 
 export default function RootLayout({

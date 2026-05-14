@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateLlmSuggestions } from "@/lib/ollama";
 import { analyzeRules } from "@/lib/ruleAnalyzer";
+import { requireAuthenticatedUser } from "@/lib/supabaseAuth";
 import { fetchTextFromUrl } from "@/lib/urlContent";
 import type { AnalysisResult, AnalyzeErrorResponse } from "@/types/analysis";
 
@@ -11,6 +12,20 @@ type AnalyzeRequestBody = {
 
 export async function POST(request: Request) {
   let body: AnalyzeRequestBody;
+
+  try {
+    await requireAuthenticatedUser(request);
+  } catch (error) {
+    return NextResponse.json<AnalyzeErrorResponse>(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "この機能を使うにはログインが必要です。"
+      },
+      { status: 401 }
+    );
+  }
 
   try {
     body = (await request.json()) as AnalyzeRequestBody;

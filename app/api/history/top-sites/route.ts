@@ -1,65 +1,45 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { findTopSiteHistories } from "@/lib/supabaseAdmin";
+import { requireAuthenticatedUser } from "@/lib/supabaseAuth";
 
 const TOP_SITE_LIMIT = 5;
 
-type TopSiteResponseItem = {
-  id: number;
-  createdAt: string;
-  inputPreview: string;
-  sourceUrl: string;
-  totalScore: number;
-  summary: string;
-};
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const histories = await prisma.diagnosisHistory.findMany({
-      where: {
-        sourceUrl: {
-          not: null
-        }
-      },
-      orderBy: [
-        {
-          totalScore: "desc"
-        },
-        {
-          createdAt: "desc"
-        }
-      ],
-      take: 100
-    });
-
-    const uniqueSites = new Map<string, TopSiteResponseItem>();
-
-    for (const history of histories) {
-      if (!history.sourceUrl || uniqueSites.has(history.sourceUrl)) {
-        continue;
-      }
-
-      uniqueSites.set(history.sourceUrl, {
-        id: history.id,
-        createdAt: history.createdAt.toISOString(),
-        inputPreview: history.inputPreview,
-        sourceUrl: history.sourceUrl,
-        totalScore: history.totalScore,
-        summary: history.summary
-      });
-
-      if (uniqueSites.size >= TOP_SITE_LIMIT) {
-        break;
-      }
-    }
+    const url = new URL(request.url);
+    const scope = url.searchParams.get("scope") === "public" ? "public" : "mine";
+    const user = await requireAuthenticatedUser(request);
+    const sites = await findTopSiteHistories(
+      TOP_SITE_LIMIT,
+      scope,
+      scope === "mine" ? user.id : undefined
+    );
 
     return NextResponse.json({
-      sites: Array.from(uniqueSites.values())
+      sites: sites.map((site) =>
+        scope === "public"
+          ? {
+              id: site.id,
+              createdAt: site.createdAt,
+              inputPreview: "",
+              sourceUrl: site.sourceUrl,
+              totalScore: site.totalScore,
+              summary: "",
+              isPublic: site.isPublic
+            }
+          : site
+      )
     });
   } catch (error) {
     console.error("[Top sites GET failed]", error);
 
     return NextResponse.json(
-      { error: "高スコアサイト5選の取得に失敗しました。DB接続とPrisma設定を確認してください。" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+      },
       { status: 500 }
     );
   }

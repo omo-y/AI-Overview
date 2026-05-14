@@ -8,6 +8,27 @@ import type {
 } from "@/types/analysis";
 
 type InputMode = "url" | "text";
+type HistoryViewMode = "recent" | "topSites";
+type TopSitesScope = "mine" | "public";
+type AuthMode = "signIn" | "signUp";
+
+type AuthSession = {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string | null;
+  };
+};
+
+type SupabaseAuthResponse = {
+  access_token?: string;
+  user?: {
+    id?: string;
+    email?: string;
+  };
+  msg?: string;
+  error_description?: string;
+};
 
 type AnalysisHistoryItem = {
   id: number;
@@ -16,6 +37,7 @@ type AnalysisHistoryItem = {
   sourceUrl: string | null;
   totalScore: number;
   summary: string;
+  isPublic: boolean;
 };
 
 type HistoryListResponse = {
@@ -37,7 +59,7 @@ type TopSitesResponse = {
   error?: string;
 };
 
-type HistoryViewMode = "recent" | "topSites";
+const SESSION_STORAGE_KEY = "ai-overview-auth-session";
 
 const sampleText = `# AI Overviewに引用されやすい記事構造とは
 
@@ -48,7 +70,7 @@ AI Overviewは短時間で回答の核を抽出するため、本文の最初に
 
 ## 改善方法
 - 重要な結論を最初に書く
-- 公式情報や出典を明記する
+- 公式情報や一次情報を引用する
 - FAQと比較表を追加する
 
 | 項目 | 改善内容 |
@@ -58,7 +80,14 @@ AI Overviewは短時間で回答の核を抽出するため、本文の最初に
 
 ## FAQ
 Q. AI Overview対策にFAQは必要ですか？
-A. 必須ではありませんが、質問と回答の対応関係が明確になり、AI検索に理解されやすくなります。`;
+A. リッチリザルト目的ではなく、質問と回答の関係を明確にする目的で有効です。`;
+
+function getSupabaseClientConfig() {
+  return {
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "",
+    anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
+  };
+}
 
 function getScoreTone(score: number): string {
   if (score >= 80) {
@@ -112,6 +141,16 @@ function getPriorityLabel(index: number): string {
   return "通常";
 }
 
+function formatAnalyzedAt(value: string): string {
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 function ScoreTable({ scores }: { scores: RuleScore[] }) {
   return (
     <div className="overflow-x-auto">
@@ -161,42 +200,187 @@ function ScoreTable({ scores }: { scores: RuleScore[] }) {
   );
 }
 
-function formatAnalyzedAt(value: string): string {
-  return new Intl.DateTimeFormat("ja-JP", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(new Date(value));
-}
-
 export default function Home() {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("signIn");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
   const [inputMode, setInputMode] = useState<InputMode>("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
+  const [isPublicRankingEnabled, setIsPublicRankingEnabled] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
   const [topSites, setTopSites] = useState<TopSiteItem[]>([]);
   const [historyViewMode, setHistoryViewMode] =
     useState<HistoryViewMode>("recent");
+  const [topSitesScope, setTopSitesScope] = useState<TopSitesScope>("mine");
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const characterCount = useMemo(() => text.trim().length, [text]);
 
+  const authHeaders = useMemo(() => {
+    if (!session) {
+      return undefined;
+    }
+
+    return {
+      Authorization: `Bearer ${session.accessToken}`
+    };
+  }, [session]);
+
+  const saveSession = useCallback((nextSession: AuthSession) => {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+    setSession(nextSession);
+  }, []);
+
+  const clearSession = useCallback(() => {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    setSession(null);
+    setHistory([]);
+    setTopSites([]);
+    setResult(null);
+  }, []);
+
+  const validateStoredSession = useCallback(async (storedSession: AuthSession) => {
+    const { url: supabaseUrl, anonKey } = getSupabaseClientConfig();
+
+    if (!supabaseUrl || !anonKey) {
+      clearSession();
+      setAuthError(
+        "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
+      );
+      return;
+    }
+
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${storedSession.accessToken}`
+      },
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      clearSession();
+      return;
+    }
+
+    setSession(storedSession);
+  }, [clearSession]);
+
+  useEffect(() => {
+    const rawSession = window.localStorage.getItem(SESSION_STORAGE_KEY);
+
+    if (!rawSession) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      try {
+        void validateStoredSession(JSON.parse(rawSession) as AuthSession);
+      } catch {
+        clearSession();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [clearSession, validateStoredSession]);
+
+  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    setAuthMessage("");
+
+    const { url: supabaseUrl, anonKey } = getSupabaseClientConfig();
+
+    if (!supabaseUrl || !anonKey) {
+      setAuthError(
+        "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
+      );
+      return;
+    }
+
+    if (!email.trim() || password.length < 6) {
+      setAuthError("メールアドレスと6文字以上のパスワードを入力してください。");
+      return;
+    }
+
+    setIsAuthLoading(true);
+
+    try {
+      const endpoint =
+        authMode === "signIn"
+          ? `${supabaseUrl}/auth/v1/token?grant_type=password`
+          : `${supabaseUrl}/auth/v1/signup`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password
+        })
+      });
+      const data = (await response.json()) as SupabaseAuthResponse;
+
+      if (!response.ok) {
+        setAuthError(
+          data.error_description ??
+            data.msg ??
+            "ログインまたはアカウント作成に失敗しました。Supabase Auth設定を確認してください。"
+        );
+        return;
+      }
+
+      if (!data.access_token || !data.user?.id) {
+        setAuthMessage(
+          "アカウントを作成しました。メール確認が有効な場合は、確認後にログインしてください。"
+        );
+        return;
+      }
+
+      saveSession({
+        accessToken: data.access_token,
+        user: {
+          id: data.user.id,
+          email: data.user.email ?? email.trim()
+        }
+      });
+      setPassword("");
+      setAuthMessage("ログインしました。");
+    } catch (authSubmitError) {
+      console.error("[Auth failed]", authSubmitError);
+      setAuthError("認証通信に失敗しました。SupabaseのURLとネットワーク状態を確認してください。");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  }
+
   const loadHistory = useCallback(async () => {
+    if (!authHeaders) {
+      return;
+    }
+
     try {
       const response = await fetch("/api/history", {
         method: "GET",
+        headers: authHeaders,
         cache: "no-store"
       });
       const data = (await response.json()) as HistoryListResponse;
 
       if (!response.ok) {
         setHistoryError(
-          data.error ?? "診断履歴の取得に失敗しました。DB設定を確認してください。"
+          data.error ?? "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
         );
         return;
       }
@@ -205,24 +389,26 @@ export default function Home() {
       setHistoryError("");
     } catch (loadError) {
       console.error("[History load failed]", loadError);
-      setHistoryError(
-        "診断履歴の取得に失敗しました。DB接続とPrisma設定を確認してください。"
-      );
+      setHistoryError("診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。");
     }
-  }, []);
+  }, [authHeaders]);
 
   const loadTopSites = useCallback(async () => {
+    if (!authHeaders) {
+      return;
+    }
+
     try {
-      const response = await fetch("/api/history/top-sites", {
+      const response = await fetch(`/api/history/top-sites?scope=${topSitesScope}`, {
         method: "GET",
+        headers: authHeaders,
         cache: "no-store"
       });
       const data = (await response.json()) as TopSitesResponse;
 
       if (!response.ok) {
         setHistoryError(
-          data.error ??
-            "高スコアサイト5選の取得に失敗しました。DB設定を確認してください。"
+          data.error ?? "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
         );
         return;
       }
@@ -231,30 +417,38 @@ export default function Home() {
       setHistoryError("");
     } catch (loadError) {
       console.error("[Top sites load failed]", loadError);
-      setHistoryError(
-        "高スコアサイト5選の取得に失敗しました。DB接続とPrisma設定を確認してください。"
-      );
+      setHistoryError("高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。");
     }
-  }, []);
+  }, [authHeaders, topSitesScope]);
 
   const refreshHistoryViews = useCallback(async () => {
     await Promise.all([loadHistory(), loadTopSites()]);
   }, [loadHistory, loadTopSites]);
 
   useEffect(() => {
+    if (!session) {
+      return;
+    }
+
     const timerId = window.setTimeout(() => {
       void refreshHistoryViews();
     }, 0);
 
     return () => window.clearTimeout(timerId);
-  }, [refreshHistoryViews]);
+  }, [refreshHistoryViews, session]);
 
   async function saveHistoryItem(analysisResult: AnalysisResult) {
+    if (!authHeaders) {
+      setHistoryError("診断履歴を保存するにはログインが必要です。");
+      return;
+    }
+
     try {
       const response = await fetch("/api/history", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...authHeaders
         },
         body: JSON.stringify({
           inputPreview:
@@ -262,7 +456,8 @@ export default function Home() {
             (inputMode === "url" ? url.trim() : text.trim()).slice(0, 100),
           sourceUrl: analysisResult.sourceUrl ?? null,
           totalScore: analysisResult.totalScore,
-          summary: analysisResult.summary
+          summary: analysisResult.summary,
+          isPublic: inputMode === "url" && isPublicRankingEnabled
         })
       });
       const data = (await response.json()) as HistoryCreateResponse;
@@ -290,6 +485,11 @@ export default function Home() {
     setError("");
     setResult(null);
 
+    if (!authHeaders) {
+      setError("診断を実行するにはログインが必要です。");
+      return;
+    }
+
     if (inputMode === "url" && url.trim().length === 0) {
       setError("診断対象ページのURLを入力してください。");
       return;
@@ -306,7 +506,8 @@ export default function Home() {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...authHeaders
         },
         body:
           inputMode === "url"
@@ -345,493 +546,633 @@ export default function Home() {
               AI Overview診断ツール
             </h1>
           </div>
-          <div className="rounded-full border border-line bg-slate-50 px-4 py-2 text-sm text-muted">
-            OpenAI APIなし / SQLite + Prisma / ローカルMVP
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="rounded-full border border-line bg-slate-50 px-4 py-2 text-sm text-muted">
+              OpenAI APIなし / Supabase Postgres / ログイン必須
+            </span>
+            {session ? (
+              <button
+                type="button"
+                onClick={clearSession}
+                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
+              >
+                ログアウト
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
-          <section className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-ink">診断対象</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                URLまたは記事本文から、AI検索に引用されやすい構造かを診断します。
-              </p>
-            </div>
+        {!session ? (
+          <section className="mx-auto max-w-xl rounded-lg border border-line bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-bold text-ink">
+              {authMode === "signIn" ? "ログイン" : "アカウント作成"}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              SaaS化を見据えて、診断実行と履歴保存はログイン必須にしています。履歴はユーザーごとに分離されます。
+            </p>
 
-            <form onSubmit={handleSubmit}>
-              <div className="mb-5 grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
-                <button
-                  type="button"
-                  aria-pressed={inputMode === "url"}
-                  onClick={() => setInputMode("url")}
-                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
-                    inputMode === "url"
-                      ? "bg-white text-accent shadow-sm"
-                      : "text-muted hover:text-ink"
-                  }`}
+            <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
+              <div>
+                <label htmlFor="email" className="text-sm font-semibold text-ink">
+                  メールアドレス
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                  autoComplete="email"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="password"
+                  className="text-sm font-semibold text-ink"
                 >
-                  URLで診断
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={inputMode === "text"}
-                  onClick={() => setInputMode("text")}
-                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
-                    inputMode === "text"
-                      ? "bg-white text-accent shadow-sm"
-                      : "text-muted hover:text-ink"
-                  }`}
-                >
-                  本文で診断
-                </button>
+                  パスワード
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                  autoComplete={
+                    authMode === "signIn" ? "current-password" : "new-password"
+                  }
+                />
               </div>
 
-              {inputMode === "url" ? (
-                <div>
-                  <label
-                    htmlFor="target-url"
-                    className="text-sm font-semibold text-ink"
-                  >
-                    診断対象ページURL
-                  </label>
-                  <input
-                    id="target-url"
-                    type="url"
-                    value={url}
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://example.com/article"
-                    className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
-                  />
-                  <p className="mt-2 text-xs leading-5 text-muted">
-                    HTMLからタイトル、見出し、本文、箇条書き、表を抽出します。
-                  </p>
+              {authError ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                  {authError}
                 </div>
-              ) : (
-                <div>
-                  <div className="mb-2 flex items-end justify-between gap-3">
-                    <label
-                      htmlFor="article"
-                      className="text-sm font-semibold text-ink"
-                    >
-                      記事本文
-                    </label>
-                    <span className="text-xs text-muted">
-                      {characterCount.toLocaleString("ja-JP")}文字
-                    </span>
-                  </div>
-                  <textarea
-                    id="article"
-                    value={text}
-                    onChange={(event) => setText(event.target.value)}
-                    placeholder="診断したい記事本文を貼り付けてください。"
-                    className="min-h-[300px] w-full resize-y rounded-md border border-line bg-white p-4 text-sm leading-7 outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
-                  />
+              ) : null}
+              {authMessage ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  {authMessage}
                 </div>
-              )}
+              ) : null}
 
-              <div className="mt-5 flex flex-col gap-3">
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="rounded-md bg-accent px-5 py-3 text-sm font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isLoading ? "診断中..." : "診断開始"}
-                </button>
-                {inputMode === "text" ? (
-                  <button
-                    type="button"
-                    onClick={() => setText(sampleText)}
-                    className="rounded-md border border-line px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-slate-50"
-                  >
-                    サンプル本文を入れる
-                  </button>
-                ) : (
-                  <p className="text-xs leading-5 text-muted">
-                    JavaScriptで後から描画される本文は抽出できない場合があります。
-                  </p>
-                )}
-              </div>
+              <button
+                type="submit"
+                disabled={isAuthLoading}
+                className="w-full rounded-md bg-accent px-5 py-3 text-sm font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isAuthLoading
+                  ? "処理中..."
+                  : authMode === "signIn"
+                    ? "ログイン"
+                    : "アカウント作成"}
+              </button>
             </form>
-          </section>
 
-          <section className="space-y-6">
-            <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
-              <h2 className="text-lg font-bold text-ink">診断結果</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                総合スコア、構造チェック、改善提案、FAQ案、メタディスクリプション案をここに表示します。
-              </p>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode(authMode === "signIn" ? "signUp" : "signIn");
+                setAuthError("");
+                setAuthMessage("");
+              }}
+              className="mt-4 text-sm font-semibold text-accent underline"
+            >
+              {authMode === "signIn"
+                ? "アカウントを作成する"
+                : "ログイン画面に戻る"}
+            </button>
+          </section>
+        ) : (
+          <>
+            <div className="mb-5 rounded-lg border border-line bg-white p-4 text-sm text-muted shadow-sm">
+              ログイン中:{" "}
+              <span className="font-semibold text-ink">
+                {session.user.email ?? session.user.id}
+              </span>
             </div>
 
-            {error ? (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-                {error}
-              </div>
-            ) : null}
+            <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
+              <section className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start">
+                <div className="mb-5">
+                  <h2 className="text-lg font-bold text-ink">診断対象</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted">
+                    URLまたは記事本文から、AI検索に引用されやすい構造かを診断します。
+                  </p>
+                </div>
 
-            {!result && !error ? (
-              <div className="rounded-lg border border-dashed border-line bg-white p-8 text-center text-sm text-muted">
-                診断を開始すると、ここに結果カードが表示されます。
-              </div>
-            ) : null}
+                <form onSubmit={handleSubmit}>
+                  <div className="mb-5 grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
+                    <button
+                      type="button"
+                      aria-pressed={inputMode === "url"}
+                      onClick={() => setInputMode("url")}
+                      className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                        inputMode === "url"
+                          ? "bg-white text-accent shadow-sm"
+                          : "text-muted hover:text-ink"
+                      }`}
+                    >
+                      URLで診断
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={inputMode === "text"}
+                      onClick={() => setInputMode("text")}
+                      className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                        inputMode === "text"
+                          ? "bg-white text-accent shadow-sm"
+                          : "text-muted hover:text-ink"
+                      }`}
+                    >
+                      本文で診断
+                    </button>
+                  </div>
 
-            {result ? (
-              <>
-                {result.llmStatus === "fallback" && result.llmError ? (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    {result.llmError}
+                  {inputMode === "url" ? (
+                    <div>
+                      <label
+                        htmlFor="target-url"
+                        className="text-sm font-semibold text-ink"
+                      >
+                        診断対象ページURL
+                      </label>
+                      <input
+                        id="target-url"
+                        type="url"
+                        value={url}
+                        onChange={(event) => setUrl(event.target.value)}
+                        placeholder="https://example.com/article"
+                        className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                      />
+                      <label className="mt-4 flex items-start gap-3 rounded-md border border-line bg-slate-50 p-3 text-sm text-muted">
+                        <input
+                          type="checkbox"
+                          checked={isPublicRankingEnabled}
+                          onChange={(event) =>
+                            setIsPublicRankingEnabled(event.target.checked)
+                          }
+                          className="mt-1"
+                        />
+                        <span>
+                          全体の高スコアサイト5選に含める。公開されるのはURL、スコア、診断日時のみです。
+                        </span>
+                      </label>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="mb-2 flex items-end justify-between gap-3">
+                        <label
+                          htmlFor="article"
+                          className="text-sm font-semibold text-ink"
+                        >
+                          記事本文
+                        </label>
+                        <span className="text-xs text-muted">
+                          {characterCount.toLocaleString("ja-JP")}文字
+                        </span>
+                      </div>
+                      <textarea
+                        id="article"
+                        value={text}
+                        onChange={(event) => setText(event.target.value)}
+                        placeholder="診断したい記事本文を貼り付けてください。"
+                        className="min-h-[300px] w-full resize-y rounded-md border border-line bg-white p-4 text-sm leading-7 outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                      />
+                    </div>
+                  )}
+
+                  <div className="mt-5 flex flex-col gap-3">
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="rounded-md bg-accent px-5 py-3 text-sm font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isLoading ? "診断中..." : "診断開始"}
+                    </button>
+                    {inputMode === "text" ? (
+                      <button
+                        type="button"
+                        onClick={() => setText(sampleText)}
+                        className="rounded-md border border-line px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-slate-50"
+                      >
+                        サンプル本文を入れる
+                      </button>
+                    ) : (
+                      <p className="text-xs leading-5 text-muted">
+                        JavaScriptで後から描画される本文は抽出できない場合があります。
+                      </p>
+                    )}
+                  </div>
+                </form>
+              </section>
+
+              <section className="space-y-6">
+                <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                  <h2 className="text-lg font-bold text-ink">診断結果</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted">
+                    総合スコア、構造チェック、改善提案、FAQ案、メタディスクリプション案を表示します。
+                  </p>
+                </div>
+
+                {error ? (
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                    {error}
                   </div>
                 ) : null}
 
-                <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-                  <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold text-muted">
-                          総合スコア
-                        </p>
-                        <p
-                          className={`mt-3 text-7xl font-bold leading-none ${getScoreTone(
-                            result.totalScore
-                          )}`}
-                        >
-                          {result.totalScore}
-                        </p>
-                      </div>
-                      <span className="rounded-full border border-line bg-slate-50 px-3 py-1 text-xs font-bold text-muted">
-                        {getScoreLabel(result.totalScore)}
-                      </span>
-                    </div>
-                    <div className="mt-5 h-3 rounded-full bg-slate-100">
-                      <div
-                        className={`h-3 rounded-full ${getScoreBackground(
-                          result.totalScore
-                        )}`}
-                        style={{ width: `${result.totalScore}%` }}
-                      />
-                    </div>
-                    <p className="mt-3 text-sm text-muted">100点満点</p>
+                {!result && !error ? (
+                  <div className="rounded-lg border border-dashed border-line bg-white p-8 text-center text-sm text-muted">
+                    診断を開始すると、ここに結果カードが表示されます。
                   </div>
+                ) : null}
 
-                  <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
-                    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <h3 className="text-lg font-bold text-ink">評価サマリー</h3>
-                      <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
-                        {result.sourceType === "url" ? "URL診断" : "本文診断"} /{" "}
-                        {result.analyzedTextLength.toLocaleString("ja-JP")}文字
-                      </span>
-                    </div>
-                    <p className="leading-7 text-muted">{result.summary}</p>
-                    {result.sourceUrl ? (
-                      <a
-                        href={result.sourceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-4 block break-all text-sm font-medium text-accent underline"
-                      >
-                        {result.sourceUrl}
-                      </a>
+                {result ? (
+                  <>
+                    {result.llmStatus === "fallback" && result.llmError ? (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                        {result.llmError}
+                      </div>
                     ) : null}
-                  </div>
-                </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded-lg border border-line bg-white p-5 shadow-sm">
-                    <p className="text-sm font-semibold text-muted">診断項目</p>
-                    <p className="mt-2 text-3xl font-bold text-ink">
-                      {result.ruleScores.length}
-                    </p>
-                    <p className="mt-1 text-xs text-muted">ルールベース評価</p>
-                  </div>
-                  <div className="rounded-lg border border-line bg-white p-5 shadow-sm">
-                    <p className="text-sm font-semibold text-muted">改善提案</p>
-                    <p className="mt-2 text-3xl font-bold text-ink">
-                      {result.improvements.length}
-                    </p>
-                    <p className="mt-1 text-xs text-muted">優先度順に表示</p>
-                  </div>
-                  <div className="rounded-lg border border-line bg-white p-5 shadow-sm">
-                    <p className="text-sm font-semibold text-muted">FAQ案</p>
-                    <p className="mt-2 text-3xl font-bold text-ink">
-                      {result.faqIdeas.length}
-                    </p>
-                    <p className="mt-1 text-xs text-muted">Q&A候補</p>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
-                  <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <h3 className="text-lg font-bold text-ink">項目別スコア</h3>
-                    <span className="text-sm text-muted">0〜10点で評価</span>
-                  </div>
-                  <ScoreTable scores={result.ruleScores} />
-                </div>
-
-                <div className="grid gap-6 xl:grid-cols-2">
-                  <div>
-                    <h3 className="text-lg font-bold text-ink">改善すべき点</h3>
-                    <div className="mt-4 space-y-3">
-                      {result.problems.map((problem, index) => (
-                        <div
-                          key={`${problem}-${index}`}
-                          className="rounded-lg border border-rose-100 bg-rose-50 p-4"
-                        >
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-rose-700">
-                              課題 {index + 1}
-                            </span>
+                    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+                      <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-muted">
+                              総合スコア
+                            </p>
+                            <p
+                              className={`mt-3 text-7xl font-bold leading-none ${getScoreTone(
+                                result.totalScore
+                              )}`}
+                            >
+                              {result.totalScore}
+                            </p>
                           </div>
-                          <p className="text-sm leading-6 text-rose-950">
-                            {problem}
-                          </p>
+                          <span className="rounded-full border border-line bg-slate-50 px-3 py-1 text-xs font-bold text-muted">
+                            {getScoreLabel(result.totalScore)}
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-bold text-ink">
-                      優先度順の改善提案
-                    </h3>
-                    <div className="mt-4 space-y-3">
-                      {result.improvements.map((improvement, index) => (
-                        <div
-                          key={`${improvement}-${index}`}
-                          className="rounded-lg border border-line bg-white p-4 shadow-sm"
-                        >
-                          <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-accent px-2.5 py-1 text-xs font-bold text-white">
-                              優先度 {index + 1}
-                            </span>
-                            <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted">
-                              {getPriorityLabel(index)}
-                            </span>
-                          </div>
-                          <p className="text-sm leading-6 text-muted">
-                            {improvement}
-                          </p>
+                        <div className="mt-5 h-3 rounded-full bg-slate-100">
+                          <div
+                            className={`h-3 rounded-full ${getScoreBackground(
+                              result.totalScore
+                            )}`}
+                            style={{ width: `${result.totalScore}%` }}
+                          />
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-bold text-ink">FAQ案</h3>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                    {result.faqIdeas.map((faq, index) => (
-                      <div
-                        key={`${faq.question}-${index}`}
-                        className="rounded-lg border border-line bg-white p-4 shadow-sm"
-                      >
-                        <p className="text-xs font-bold text-accent">
-                          FAQ {index + 1}
-                        </p>
-                        <p className="mt-2 font-semibold leading-6 text-ink">
-                          Q. {faq.question}
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-muted">
-                          A. {faq.answer}
-                        </p>
+                        <p className="mt-3 text-sm text-muted">100点満点</p>
                       </div>
-                    ))}
-                  </div>
-                </div>
 
-                <div>
-                  <h3 className="text-lg font-bold text-ink">
-                    メタディスクリプション案
-                  </h3>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                    {result.metaDescriptions.map((description, index) => (
-                      <div
-                        key={`${description}-${index}`}
-                        className="rounded-lg border border-line bg-slate-50 p-4"
-                      >
-                        <p className="mb-2 text-xs font-bold text-muted">
-                          案 {index + 1}
-                        </p>
-                        <p className="text-sm leading-6 text-ink">
-                          {description}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </section>
-        </div>
-
-        <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
-          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-ink">診断データ</h2>
-              <p className="mt-1 text-sm text-muted">
-                SQLiteに保存された履歴を、最新順または高スコア順で確認できます。
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
-                <button
-                  type="button"
-                  onClick={() => setHistoryViewMode("recent")}
-                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
-                    historyViewMode === "recent"
-                      ? "bg-white text-accent shadow-sm"
-                      : "text-muted hover:text-ink"
-                  }`}
-                >
-                  診断履歴
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setHistoryViewMode("topSites")}
-                  className={`rounded px-3 py-2 text-sm font-semibold transition ${
-                    historyViewMode === "topSites"
-                      ? "bg-white text-accent shadow-sm"
-                      : "text-muted hover:text-ink"
-                  }`}
-                >
-                  高スコアサイト5選
-                </button>
-              </div>
-              <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
-                SQLite + Prisma
-              </span>
-            </div>
-          </div>
-
-          {historyError ? (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              {historyError}
-            </div>
-          ) : null}
-
-          {historyViewMode === "recent" && history.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
-              まだ診断履歴はありません。
-            </div>
-          ) : null}
-
-          {historyViewMode === "recent" && history.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
-                    <th className="px-4 py-3 font-semibold">日時</th>
-                    <th className="px-4 py-3 font-semibold">診断URL</th>
-                    <th className="px-4 py-3 font-semibold">入力プレビュー</th>
-                    <th className="w-28 px-4 py-3 text-right font-semibold">
-                      スコア
-                    </th>
-                    <th className="px-4 py-3 font-semibold">サマリー</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((item) => (
-                    <tr key={item.id} className="border-b border-line last:border-0">
-                      <td className="whitespace-nowrap px-4 py-4 text-muted">
-                        {formatAnalyzedAt(item.createdAt)}
-                      </td>
-                      <td className="max-w-[260px] px-4 py-4">
-                        {item.sourceUrl ? (
+                      <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
+                        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <h3 className="text-lg font-bold text-ink">
+                            評価サマリー
+                          </h3>
+                          <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+                            {result.sourceType === "url" ? "URL診断" : "本文診断"} /{" "}
+                            {result.analyzedTextLength.toLocaleString("ja-JP")}
+                            文字
+                          </span>
+                        </div>
+                        <p className="leading-7 text-muted">{result.summary}</p>
+                        {result.sourceUrl ? (
                           <a
-                            href={item.sourceUrl}
+                            href={result.sourceUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="block truncate font-medium text-accent underline"
-                            title={item.sourceUrl}
+                            className="mt-4 block break-all text-sm font-medium text-accent underline"
                           >
-                            {item.sourceUrl}
+                            {result.sourceUrl}
                           </a>
-                        ) : (
-                          <span className="text-muted">本文入力</span>
-                        )}
-                      </td>
-                      <td className="max-w-[280px] px-4 py-4 font-medium leading-6 text-ink">
-                        {item.inputPreview}
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <span className={`font-bold ${getScoreTone(item.totalScore)}`}>
-                          {item.totalScore}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 leading-6 text-muted">
-                        {item.summary}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
+                        ) : null}
+                      </div>
+                    </div>
 
-          {historyViewMode === "topSites" && topSites.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
-              URL診断の履歴がまだありません。
-            </div>
-          ) : null}
+                    <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <h3 className="text-lg font-bold text-ink">
+                          項目別スコア
+                        </h3>
+                        <span className="text-sm text-muted">0〜10点で評価</span>
+                      </div>
+                      <ScoreTable scores={result.ruleScores} />
+                    </div>
 
-          {historyViewMode === "topSites" && topSites.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[880px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
-                    <th className="w-20 px-4 py-3 text-right font-semibold">
-                      順位
-                    </th>
-                    <th className="w-28 px-4 py-3 text-right font-semibold">
-                      スコア
-                    </th>
-                    <th className="px-4 py-3 font-semibold">診断URL</th>
-                    <th className="px-4 py-3 font-semibold">サマリー</th>
-                    <th className="whitespace-nowrap px-4 py-3 font-semibold">
-                      診断日時
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topSites.map((site, index) => (
-                    <tr key={site.id} className="border-b border-line last:border-0">
-                      <td className="px-4 py-4 text-right font-bold text-muted">
-                        {index + 1}
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <span
-                          className={`text-lg font-bold ${getScoreTone(
-                            site.totalScore
-                          )}`}
-                        >
-                          {site.totalScore}
-                        </span>
-                      </td>
-                      <td className="max-w-[320px] px-4 py-4">
-                        <a
-                          href={site.sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block truncate font-medium text-accent underline"
-                          title={site.sourceUrl}
-                        >
-                          {site.sourceUrl}
-                        </a>
-                      </td>
-                      <td className="px-4 py-4 leading-6 text-muted">
-                        {site.summary}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-4 text-muted">
-                        {formatAnalyzedAt(site.createdAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    <div className="grid gap-6 xl:grid-cols-2">
+                      <div>
+                        <h3 className="text-lg font-bold text-ink">改善すべき点</h3>
+                        <div className="mt-4 space-y-3">
+                          {result.problems.map((problem, index) => (
+                            <div
+                              key={`${problem}-${index}`}
+                              className="rounded-lg border border-rose-100 bg-rose-50 p-4"
+                            >
+                              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-rose-700">
+                                課題 {index + 1}
+                              </span>
+                              <p className="mt-2 text-sm leading-6 text-rose-950">
+                                {problem}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-lg font-bold text-ink">
+                          優先度順の改善提案
+                        </h3>
+                        <div className="mt-4 space-y-3">
+                          {result.improvements.map((improvement, index) => (
+                            <div
+                              key={`${improvement}-${index}`}
+                              className="rounded-lg border border-line bg-white p-4 shadow-sm"
+                            >
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full bg-accent px-2.5 py-1 text-xs font-bold text-white">
+                                  優先度 {index + 1}
+                                </span>
+                                <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted">
+                                  {getPriorityLabel(index)}
+                                </span>
+                              </div>
+                              <p className="text-sm leading-6 text-muted">
+                                {improvement}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-bold text-ink">FAQ案</h3>
+                      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                        {result.faqIdeas.map((faq, index) => (
+                          <div
+                            key={`${faq.question}-${index}`}
+                            className="rounded-lg border border-line bg-white p-4 shadow-sm"
+                          >
+                            <p className="text-xs font-bold text-accent">
+                              FAQ {index + 1}
+                            </p>
+                            <p className="mt-2 font-semibold leading-6 text-ink">
+                              Q. {faq.question}
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-muted">
+                              A. {faq.answer}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-bold text-ink">
+                        メタディスクリプション案
+                      </h3>
+                      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                        {result.metaDescriptions.map((description, index) => (
+                          <div
+                            key={`${description}-${index}`}
+                            className="rounded-lg border border-line bg-slate-50 p-4"
+                          >
+                            <p className="mb-2 text-xs font-bold text-muted">
+                              案 {index + 1}
+                            </p>
+                            <p className="text-sm leading-6 text-ink">
+                              {description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </section>
             </div>
-          ) : null}
-        </section>
+
+            <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+              <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-ink">診断データ</h2>
+                  <p className="mt-1 text-sm text-muted">
+                    自分の履歴と高スコアサイトを確認できます。全体ランキングは公開許可されたURLのみ表示します。
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setHistoryViewMode("recent")}
+                      className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                        historyViewMode === "recent"
+                          ? "bg-white text-accent shadow-sm"
+                          : "text-muted hover:text-ink"
+                      }`}
+                    >
+                      診断履歴
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryViewMode("topSites")}
+                      className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                        historyViewMode === "topSites"
+                          ? "bg-white text-accent shadow-sm"
+                          : "text-muted hover:text-ink"
+                      }`}
+                    >
+                      高スコアサイト5選
+                    </button>
+                  </div>
+                  <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+                    Supabase Auth + Postgres
+                  </span>
+                </div>
+              </div>
+
+              {historyViewMode === "topSites" ? (
+                <div className="mb-4 inline-grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setTopSitesScope("mine")}
+                    className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                      topSitesScope === "mine"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    自分だけ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTopSitesScope("public")}
+                    className={`rounded px-3 py-2 text-sm font-semibold transition ${
+                      topSitesScope === "public"
+                        ? "bg-white text-accent shadow-sm"
+                        : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    全体
+                  </button>
+                </div>
+              ) : null}
+
+              {historyError ? (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  {historyError}
+                </div>
+              ) : null}
+
+              {historyViewMode === "recent" && history.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
+                  まだ診断履歴はありません。
+                </div>
+              ) : null}
+
+              {historyViewMode === "recent" && history.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
+                        <th className="px-4 py-3 font-semibold">日時</th>
+                        <th className="px-4 py-3 font-semibold">診断URL</th>
+                        <th className="px-4 py-3 font-semibold">
+                          入力プレビュー
+                        </th>
+                        <th className="w-28 px-4 py-3 text-right font-semibold">
+                          スコア
+                        </th>
+                        <th className="w-28 px-4 py-3 font-semibold">公開</th>
+                        <th className="px-4 py-3 font-semibold">サマリー</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((item) => (
+                        <tr
+                          key={item.id}
+                          className="border-b border-line last:border-0"
+                        >
+                          <td className="whitespace-nowrap px-4 py-4 text-muted">
+                            {formatAnalyzedAt(item.createdAt)}
+                          </td>
+                          <td className="max-w-[260px] px-4 py-4">
+                            {item.sourceUrl ? (
+                              <a
+                                href={item.sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block truncate font-medium text-accent underline"
+                                title={item.sourceUrl}
+                              >
+                                {item.sourceUrl}
+                              </a>
+                            ) : (
+                              <span className="text-muted">本文入力</span>
+                            )}
+                          </td>
+                          <td className="max-w-[280px] px-4 py-4 font-medium leading-6 text-ink">
+                            {item.inputPreview}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <span
+                              className={`font-bold ${getScoreTone(
+                                item.totalScore
+                              )}`}
+                            >
+                              {item.totalScore}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted">
+                              {item.isPublic ? "公開" : "非公開"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 leading-6 text-muted">
+                            {item.summary}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              {historyViewMode === "topSites" && topSites.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
+                  URL診断の履歴がまだありません。
+                </div>
+              ) : null}
+
+              {historyViewMode === "topSites" && topSites.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[880px] border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
+                        <th className="w-20 px-4 py-3 text-right font-semibold">
+                          順位
+                        </th>
+                        <th className="w-28 px-4 py-3 text-right font-semibold">
+                          スコア
+                        </th>
+                        <th className="px-4 py-3 font-semibold">診断URL</th>
+                        {topSitesScope === "mine" ? (
+                          <th className="px-4 py-3 font-semibold">サマリー</th>
+                        ) : null}
+                        <th className="whitespace-nowrap px-4 py-3 font-semibold">
+                          診断日時
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topSites.map((site, index) => (
+                        <tr
+                          key={site.id}
+                          className="border-b border-line last:border-0"
+                        >
+                          <td className="px-4 py-4 text-right font-bold text-muted">
+                            {index + 1}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <span
+                              className={`text-lg font-bold ${getScoreTone(
+                                site.totalScore
+                              )}`}
+                            >
+                              {site.totalScore}
+                            </span>
+                          </td>
+                          <td className="max-w-[360px] px-4 py-4">
+                            <a
+                              href={site.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block truncate font-medium text-accent underline"
+                              title={site.sourceUrl}
+                            >
+                              {site.sourceUrl}
+                            </a>
+                          </td>
+                          {topSitesScope === "mine" ? (
+                            <td className="px-4 py-4 leading-6 text-muted">
+                              {site.summary}
+                            </td>
+                          ) : null}
+                          <td className="whitespace-nowrap px-4 py-4 text-muted">
+                            {formatAnalyzedAt(site.createdAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </section>
+          </>
+        )}
       </div>
     </main>
   );
