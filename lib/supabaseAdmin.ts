@@ -9,6 +9,13 @@ type SupabaseHistoryRow = {
   is_public: boolean;
 };
 
+type SupabaseUsageRow = {
+  id: number;
+  user_id: string;
+  action: string;
+  created_at: string;
+};
+
 export type HistoryResponseItem = {
   id: number;
   createdAt: string;
@@ -17,6 +24,15 @@ export type HistoryResponseItem = {
   totalScore: number;
   summary: string;
   isPublic: boolean;
+};
+
+export type UsageSummary = {
+  monthlyLimit: number;
+  usedThisMonth: number;
+  remainingThisMonth: number;
+  periodStart: string;
+  isAvailable: boolean;
+  message?: string;
 };
 
 type InsertHistoryInput = {
@@ -30,6 +46,10 @@ type InsertHistoryInput = {
 
 const HISTORY_SELECT =
   "id,user_id,created_at,input_preview,source_url,total_score,summary,is_public";
+const USAGE_SELECT = "id,user_id,action,created_at";
+const DEFAULT_MONTHLY_DIAGNOSIS_LIMIT = 10;
+const USAGE_TABLE_MISSING_MESSAGE =
+  "利用回数テーブルが未作成です。診断は実行できますが、月間回数制限はまだ有効ではありません。";
 
 function getSupabaseConfig() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -37,7 +57,7 @@ function getSupabaseConfig() {
 
   if (!url || !serviceRoleKey) {
     throw new Error(
-      "Supabase設定が不足しています。NEXT_PUBLIC_SUPABASE_URL と SUPABASE_SERVICE_ROLE_KEY を .env.local に設定してください。"
+      "Supabase設定が不足しています。.env.local を確認してください。"
     );
   }
 
@@ -45,6 +65,35 @@ function getSupabaseConfig() {
     url: url.replace(/\/$/, ""),
     serviceRoleKey
   };
+}
+
+function getMonthlyDiagnosisLimit() {
+  const rawLimit = process.env.MONTHLY_DIAGNOSIS_LIMIT;
+  const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : NaN;
+
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    return DEFAULT_MONTHLY_DIAGNOSIS_LIMIT;
+  }
+
+  return parsedLimit;
+}
+
+function getCurrentMonthStart() {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)
+  ).toISOString();
+}
+
+function isUsageTableMissingError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.includes("usage_events") ||
+    error.message.includes("PGRST205")
+  );
 }
 
 function toHistoryResponse(row: SupabaseHistoryRow): HistoryResponseItem {
@@ -77,6 +126,10 @@ async function requestSupabase<T>(path: string, init?: RequestInit): Promise<T> 
     throw new Error(
       `Supabase API error: HTTP ${response.status}${message ? ` ${message}` : ""}`
     );
+  }
+
+  if (response.status === 204) {
+    return [] as T;
   }
 
   return (await response.json()) as T;
@@ -167,4 +220,85 @@ export async function findTopSiteHistories(
   }
 
   return Array.from(uniqueSites.values());
+}
+
+export async function getDiagnosisUsageSummary(
+  userId: string
+): Promise<UsageSummary> {
+  const monthlyLimit = getMonthlyDiagnosisLimit();
+  const periodStart = getCurrentMonthStart();
+  const query = new URLSearchParams({
+    select: USAGE_SELECT,
+    user_id: `eq.${userId}`,
+    action: "eq.diagnosis",
+    created_at: `gte.${periodStart}`,
+    limit: String(Math.max(monthlyLimit + 50, 100))
+  });
+
+  try {
+    const rows = await requestSupabase<SupabaseUsageRow[]>(
+      `/usage_events?${query.toString()}`
+    );
+    const usedThisMonth = rows.length;
+
+    return {
+      monthlyLimit,
+      usedThisMonth,
+      remainingThisMonth: Math.max(monthlyLimit - usedThisMonth, 0),
+      periodStart,
+      isAvailable: true
+    };
+  } catch (error) {
+    if (!isUsageTableMissingError(error)) {
+      throw error;
+    }
+
+    console.warn("[Usage table missing]", error);
+
+    return {
+      monthlyLimit,
+      usedThisMonth: 0,
+      remainingThisMonth: monthlyLimit,
+      periodStart,
+      isAvailable: false,
+      message: USAGE_TABLE_MISSING_MESSAGE
+    };
+  }
+}
+
+export async function assertDiagnosisUsageAvailable(userId: string) {
+  const usage = await getDiagnosisUsageSummary(userId);
+
+  if (!usage.isAvailable) {
+    return usage;
+  }
+
+  if (usage.remainingThisMonth <= 0) {
+    throw new Error(
+      `今月の診断回数上限（${usage.monthlyLimit}回）に達しました。来月になると再び診断できます。`
+    );
+  }
+
+  return usage;
+}
+
+export async function recordDiagnosisUsage(userId: string) {
+  try {
+    await requestSupabase<SupabaseUsageRow[]>("/usage_events", {
+      method: "POST",
+      headers: {
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        action: "diagnosis"
+      })
+    });
+  } catch (error) {
+    if (!isUsageTableMissingError(error)) {
+      throw error;
+    }
+
+    console.warn("[Usage record skipped because table is missing]", error);
+  }
 }

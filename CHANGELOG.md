@@ -12,6 +12,16 @@
 - `.env.local.example` に `NEXT_PUBLIC_SUPABASE_ANON_KEY` を追加
 - READMEをSupabase Auth + Postgres構成に合わせて更新
 
+## 2026-05-15
+
+- 月間診断回数制限を追加
+- `usage_events` テーブルで診断実行を記録するように変更
+- `/api/usage` を追加し、今月の使用回数を画面に表示
+- URL診断にSSRF対策を追加
+- `localhost`、プライベートIP、リンクローカルIP、特殊ポート、内部URLへのリダイレクトをブロック
+- Supabase Authのパスワードリセット導線を追加
+- READMEとSupabase SQLを更新
+
 ## これまでの主な変更
 
 - Next.js App Router、TypeScript、Tailwind CSSでMVPを作成

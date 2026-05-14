@@ -31,3 +31,12 @@ export type AnalysisResult = LlmResult & {
 export type AnalyzeErrorResponse = {
   error: string;
 };
+
+export type UsageSummary = {
+  monthlyLimit: number;
+  usedThisMonth: number;
+  remainingThisMonth: number;
+  periodStart: string;
+  isAvailable: boolean;
+  message?: string;
+};

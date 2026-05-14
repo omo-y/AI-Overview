@@ -14,6 +14,9 @@ URLまたは本文を入力すると、AI OverviewやAI検索で引用されや�
 - 自分の診断履歴の最新5件表示
 - 高スコアサイト5選の「自分だけ / 全体」切り替え
 - 全体ランキングは、ユーザーが公開許可したURL診断のみ表示
+- 月間診断回数制限
+- URL診断のSSRF対策
+- パスワードリセット
 
 ## 必要なもの
 
@@ -37,6 +40,7 @@ OLLAMA_ENDPOINT=http://localhost:11434/api/generate
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+MONTHLY_DIAGNOSIS_LIMIT=10
 ```
 
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` はブラウザ側のログイン処理で使います。`SUPABASE_SERVICE_ROLE_KEY` はサーバー側だけで使い、ブラウザに出してはいけません。
@@ -56,6 +60,14 @@ curl http://localhost:11434/api/tags
 3. すぐ試す場合は Email Confirmations を無効にする
 4. SQL Editorで `supabase/schema.sql` の内容を実行する
 5. Table Editorで `diagnosis_histories` が作成されたことを確認する
+6. Table Editorで `usage_events` が作成されたことを確認する
+
+パスワードリセットをローカルで確認する場合は、Authentication > URL Configuration で以下も許可してください。
+
+```text
+Site URL: http://localhost:3000
+Redirect URLs: http://localhost:3000
+```
 
 既存テーブルがある場合も、`supabase/schema.sql` には不足カラムを追加するSQLを含めています。
 
@@ -91,6 +103,31 @@ http://localhost:3000
 5. 診断履歴に保存されることを確認する
 6. URL診断時に「全体の高スコアサイト5選に含める」をオンにして診断する
 7. 高スコアサイト5選で「自分だけ」と「全体」を切り替える
+8. ログイン画面の「パスワードを忘れた場合」からリセットメールを送信する
+
+## 利用回数制限
+
+診断が成功すると `usage_events` に `action = diagnosis` のレコードを保存します。
+
+月間上限は `.env.local` の `MONTHLY_DIAGNOSIS_LIMIT` で変更できます。未設定の場合は月10回です。
+
+```env
+MONTHLY_DIAGNOSIS_LIMIT=10
+```
+
+## URL診断のSSRF対策
+
+URL診断では以下をブロックします。
+
+- `localhost`
+- `.localhost`
+- プライベートIP
+- ループバックIP
+- リンクローカルIP
+- 80番、443番以外のポート
+- 内部URLへリダイレクトするページ
+
+これにより、SaaS化時にユーザー入力URLから内部ネットワークへアクセスされるリスクを下げます。
 
 ## よくあるエラー
 
@@ -100,7 +137,11 @@ http://localhost:3000
 
 ### 診断履歴の保存に失敗する
 
-`SUPABASE_SERVICE_ROLE_KEY`、`diagnosis_histories` テーブル、`is_public` カラム、`user_id` カラムを確認してください。SQL Editorで `supabase/schema.sql` を実行してください。
+`SUPABASE_SERVICE_ROLE_KEY`、`diagnosis_histories` テーブル、`usage_events` テーブル、`is_public` カラム、`user_id` カラムを確認してください。SQL Editorで `supabase/schema.sql` を実行してください。
+
+### 利用回数の取得に失敗する
+
+`usage_events` テーブルが作成されていない可能性があります。SQL Editorで `supabase/schema.sql` を実行してください。
 
 ### Ollamaに接続できない
 
@@ -136,6 +177,8 @@ app/
       route.ts
       top-sites/
         route.ts
+    usage/
+      route.ts
 lib/
   aiOverviewKnowledge.ts
   ollama.ts

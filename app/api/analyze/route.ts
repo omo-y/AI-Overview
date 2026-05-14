@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { generateLlmSuggestions } from "@/lib/ollama";
 import { analyzeRules } from "@/lib/ruleAnalyzer";
-import { requireAuthenticatedUser } from "@/lib/supabaseAuth";
+import {
+  assertDiagnosisUsageAvailable,
+  recordDiagnosisUsage
+} from "@/lib/supabaseAdmin";
+import {
+  requireAuthenticatedUser,
+  type AuthenticatedUser
+} from "@/lib/supabaseAuth";
 import { fetchTextFromUrl } from "@/lib/urlContent";
 import type { AnalysisResult, AnalyzeErrorResponse } from "@/types/analysis";
 
@@ -11,10 +18,11 @@ type AnalyzeRequestBody = {
 };
 
 export async function POST(request: Request) {
+  let user: AuthenticatedUser;
   let body: AnalyzeRequestBody;
 
   try {
-    await requireAuthenticatedUser(request);
+    user = await requireAuthenticatedUser(request);
   } catch (error) {
     return NextResponse.json<AnalyzeErrorResponse>(
       {
@@ -78,12 +86,32 @@ export async function POST(request: Request) {
     );
   }
 
+  try {
+    await assertDiagnosisUsageAvailable(user.id);
+  } catch (error) {
+    return NextResponse.json<AnalyzeErrorResponse>(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "今月の診断回数上限に達しました。"
+      },
+      { status: 429 }
+    );
+  }
+
   const ruleAnalysis = analyzeRules(article);
   const llmResult = await generateLlmSuggestions(
     article,
     ruleAnalysis.totalScore,
     ruleAnalysis.ruleScores
   );
+
+  try {
+    await recordDiagnosisUsage(user.id);
+  } catch (error) {
+    console.error("[Usage record failed]", error);
+  }
 
   const response: AnalysisResult = {
     totalScore: ruleAnalysis.totalScore,

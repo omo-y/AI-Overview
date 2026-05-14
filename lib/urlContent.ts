@@ -1,9 +1,16 @@
+import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import { isIP } from "node:net";
+
 type FetchUrlResult = {
   text: string;
   finalUrl: string;
 };
 
 const MAX_EXTRACTED_LENGTH = 20_000;
+const MAX_REDIRECTS = 3;
+const ALLOWED_PORTS = new Set(["", "80", "443"]);
+const BLOCKED_HOSTNAMES = new Set(["localhost", "localhost.localdomain"]);
 
 function decodeHtmlEntities(text: string): string {
   const namedEntities: Record<string, string> = {
@@ -106,14 +113,139 @@ function parseHttpUrl(url: string): URL {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error("URLの形式が正しくありません。https:// から始まるURLを入力してください。");
+    throw new Error(
+      "URLの形式が正しくありません。https:// から始まるURLを入力してください。"
+    );
   }
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
     throw new Error("URLは http または https のページを指定してください。");
   }
 
+  if (parsed.username || parsed.password) {
+    throw new Error("ユーザー名やパスワードを含むURLは診断できません。");
+  }
+
+  if (!ALLOWED_PORTS.has(parsed.port)) {
+    throw new Error("80番または443番以外のポートを指定したURLは診断できません。");
+  }
+
   return parsed;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number.parseInt(part, 10));
+
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
+    return true;
+  }
+
+  const [a, b] = parts;
+
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+
+  return (
+    normalized === "::1" ||
+    normalized === "::" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80") ||
+    normalized.startsWith("::ffff:10.") ||
+    normalized.startsWith("::ffff:127.") ||
+    normalized.startsWith("::ffff:192.168.") ||
+    /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+  );
+}
+
+function isBlockedIpAddress(address: string): boolean {
+  const version = isIP(address);
+
+  if (version === 4) {
+    return isPrivateIpv4(address);
+  }
+
+  if (version === 6) {
+    return isPrivateIpv6(address);
+  }
+
+  return true;
+}
+
+async function validatePublicHttpUrl(url: URL) {
+  const hostname = url.hostname.toLowerCase();
+
+  if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith(".localhost")) {
+    throw new Error("ローカルホストや内部ネットワークのURLは診断できません。");
+  }
+
+  if (isIP(hostname) && isBlockedIpAddress(hostname)) {
+    throw new Error("ローカルホストや内部ネットワークのURLは診断できません。");
+  }
+
+  let addresses: LookupAddress[];
+
+  try {
+    addresses = await lookup(hostname, {
+      all: true,
+      verbatim: true
+    });
+  } catch {
+    throw new Error("URLのホスト名を解決できませんでした。");
+  }
+
+  if (addresses.length === 0) {
+    throw new Error("URLのホスト名を解決できませんでした。");
+  }
+
+  if (addresses.some((address) => isBlockedIpAddress(address.address))) {
+    throw new Error("ローカルホストや内部ネットワークに接続するURLは診断できません。");
+  }
+}
+
+async function fetchWithSafeRedirects(
+  initialUrl: URL,
+  signal: AbortSignal
+): Promise<Response> {
+  let currentUrl = initialUrl;
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    await validatePublicHttpUrl(currentUrl);
+
+    const response = await fetch(currentUrl.toString(), {
+      headers: {
+        Accept: "text/html, text/plain;q=0.9, */*;q=0.8",
+        "User-Agent": "AI-Overview-Diagnostic-MVP/0.1"
+      },
+      redirect: "manual",
+      signal
+    });
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
+    }
+
+    const location = response.headers.get("location");
+
+    if (!location) {
+      return response;
+    }
+
+    currentUrl = parseHttpUrl(new URL(location, currentUrl).toString());
+  }
+
+  throw new Error("リダイレクトが多すぎるため、URL診断を中止しました。");
 }
 
 export async function fetchTextFromUrl(url: string): Promise<FetchUrlResult> {
@@ -122,14 +254,7 @@ export async function fetchTextFromUrl(url: string): Promise<FetchUrlResult> {
   const timeoutId = setTimeout(() => controller.abort(), 20_000);
 
   try {
-    const response = await fetch(parsedUrl.toString(), {
-      headers: {
-        Accept: "text/html, text/plain;q=0.9, */*;q=0.8",
-        "User-Agent": "AI-Overview-Diagnostic-MVP/0.1"
-      },
-      redirect: "follow",
-      signal: controller.signal
-    });
+    const response = await fetchWithSafeRedirects(parsedUrl, controller.signal);
 
     if (!response.ok) {
       throw new Error(

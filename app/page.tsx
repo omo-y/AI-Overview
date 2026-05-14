@@ -4,13 +4,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AnalysisResult,
   AnalyzeErrorResponse,
-  RuleScore
+  RuleScore,
+  UsageSummary
 } from "@/types/analysis";
 
 type InputMode = "url" | "text";
 type HistoryViewMode = "recent" | "topSites";
 type TopSitesScope = "mine" | "public";
-type AuthMode = "signIn" | "signUp";
+type AuthMode = "signIn" | "signUp" | "resetRequest" | "updatePassword";
 
 type AuthSession = {
   accessToken: string;
@@ -56,6 +57,11 @@ type TopSiteItem = AnalysisHistoryItem & {
 
 type TopSitesResponse = {
   sites: TopSiteItem[];
+  error?: string;
+};
+
+type UsageResponse = {
+  usage: UsageSummary;
   error?: string;
 };
 
@@ -151,6 +157,22 @@ function formatAnalyzedAt(value: string): string {
   }).format(new Date(value));
 }
 
+function getAuthTitle(authMode: AuthMode) {
+  if (authMode === "signUp") {
+    return "アカウント作成";
+  }
+
+  if (authMode === "resetRequest") {
+    return "パスワードリセット";
+  }
+
+  if (authMode === "updatePassword") {
+    return "新しいパスワードを設定";
+  }
+
+  return "ログイン";
+}
+
 function ScoreTable({ scores }: { scores: RuleScore[] }) {
   return (
     <div className="overflow-x-auto">
@@ -205,6 +227,8 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<AuthMode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [resetAccessToken, setResetAccessToken] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authError, setAuthError] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -219,6 +243,8 @@ export default function Home() {
   const [historyViewMode, setHistoryViewMode] =
     useState<HistoryViewMode>("recent");
   const [topSitesScope, setTopSitesScope] = useState<TopSitesScope>("mine");
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [usageNotice, setUsageNotice] = useState("");
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -235,44 +261,69 @@ export default function Home() {
     };
   }, [session]);
 
-  const saveSession = useCallback((nextSession: AuthSession) => {
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession));
-    setSession(nextSession);
-  }, []);
-
   const clearSession = useCallback(() => {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
     setSession(null);
     setHistory([]);
     setTopSites([]);
+    setUsage(null);
+    setUsageNotice("");
     setResult(null);
   }, []);
 
-  const validateStoredSession = useCallback(async (storedSession: AuthSession) => {
-    const { url: supabaseUrl, anonKey } = getSupabaseClientConfig();
+  const saveSession = useCallback((nextSession: AuthSession) => {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+    setSession(nextSession);
+  }, []);
 
-    if (!supabaseUrl || !anonKey) {
-      clearSession();
-      setAuthError(
-        "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
-      );
+  const validateStoredSession = useCallback(
+    async (storedSession: AuthSession) => {
+      const { url: supabaseUrl, anonKey } = getSupabaseClientConfig();
+
+      if (!supabaseUrl || !anonKey) {
+        clearSession();
+        setAuthError(
+          "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
+        );
+        return;
+      }
+
+      const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${storedSession.accessToken}`
+        },
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        clearSession();
+        return;
+      }
+
+      setSession(storedSession);
+    },
+    [clearSession]
+  );
+
+  useEffect(() => {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const accessToken = hashParams.get("access_token");
+    const type = hashParams.get("type");
+
+    if (!accessToken || type !== "recovery") {
       return;
     }
 
-    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${storedSession.accessToken}`
-      },
-      cache: "no-store"
-    });
-
-    if (!response.ok) {
+    const timerId = window.setTimeout(() => {
       clearSession();
-      return;
-    }
+      setResetAccessToken(accessToken);
+      setAuthMode("updatePassword");
+      setAuthMessage("新しいパスワードを入力してください。");
+      window.history.replaceState(null, "", window.location.pathname);
+    }, 0);
 
-    setSession(storedSession);
+    return () => window.clearTimeout(timerId);
   }, [clearSession]);
 
   useEffect(() => {
@@ -304,6 +355,103 @@ export default function Home() {
       setAuthError(
         "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
       );
+      return;
+    }
+
+    if (authMode === "resetRequest") {
+      if (!email.trim()) {
+        setAuthError("パスワードリセット用のメールアドレスを入力してください。");
+        return;
+      }
+
+      setIsAuthLoading(true);
+
+      try {
+        const response = await fetch(
+          `${supabaseUrl}/auth/v1/recover?redirect_to=${encodeURIComponent(
+            window.location.origin
+          )}`,
+          {
+            method: "POST",
+            headers: {
+              apikey: anonKey,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              email: email.trim()
+            })
+          }
+        );
+        const data = (await response.json().catch(() => ({}))) as SupabaseAuthResponse;
+
+        if (!response.ok) {
+          setAuthError(
+            data.error_description ??
+              data.msg ??
+              "パスワードリセットメールの送信に失敗しました。"
+          );
+          return;
+        }
+
+        setAuthMessage("パスワードリセット用のメールを送信しました。メール内のリンクを開いてください。");
+      } catch (authSubmitError) {
+        console.error("[Password reset request failed]", authSubmitError);
+        setAuthError("パスワードリセットメールの送信に失敗しました。");
+      } finally {
+        setIsAuthLoading(false);
+      }
+
+      return;
+    }
+
+    if (authMode === "updatePassword") {
+      if (!resetAccessToken) {
+        setAuthError("パスワード変更用のトークンが見つかりません。もう一度リセットメールを送信してください。");
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        setAuthError("新しいパスワードは6文字以上で入力してください。");
+        return;
+      }
+
+      setIsAuthLoading(true);
+
+      try {
+        const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+          method: "PUT",
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${resetAccessToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            password: newPassword
+          })
+        });
+        const data = (await response.json().catch(() => ({}))) as SupabaseAuthResponse;
+
+        if (!response.ok) {
+          setAuthError(
+            data.error_description ??
+              data.msg ??
+              "パスワードの変更に失敗しました。"
+          );
+          return;
+        }
+
+        setResetAccessToken("");
+        setNewPassword("");
+        setPassword("");
+        setAuthMode("signIn");
+        setAuthMessage("パスワードを変更しました。新しいパスワードでログインしてください。");
+      } catch (authSubmitError) {
+        console.error("[Password update failed]", authSubmitError);
+        setAuthError("パスワードの変更に失敗しました。");
+      } finally {
+        setIsAuthLoading(false);
+      }
+
       return;
     }
 
@@ -365,6 +513,32 @@ export default function Home() {
     }
   }
 
+  const loadUsage = useCallback(async () => {
+    if (!authHeaders) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/usage", {
+        method: "GET",
+        headers: authHeaders,
+        cache: "no-store"
+      });
+      const data = (await response.json()) as UsageResponse;
+
+      if (!response.ok) {
+        setUsageNotice(data.error ?? "利用回数の取得に失敗しました。");
+        return;
+      }
+
+      setUsage(data.usage);
+      setUsageNotice(data.usage.message ?? "");
+    } catch (loadError) {
+      console.error("[Usage load failed]", loadError);
+      setUsageNotice("利用回数の取得に失敗しました。診断は実行できます。");
+    }
+  }, [authHeaders]);
+
   const loadHistory = useCallback(async () => {
     if (!authHeaders) {
       return;
@@ -422,8 +596,8 @@ export default function Home() {
   }, [authHeaders, topSitesScope]);
 
   const refreshHistoryViews = useCallback(async () => {
-    await Promise.all([loadHistory(), loadTopSites()]);
-  }, [loadHistory, loadTopSites]);
+    await Promise.all([loadHistory(), loadTopSites(), loadUsage()]);
+  }, [loadHistory, loadTopSites, loadUsage]);
 
   useEffect(() => {
     if (!session) {
@@ -490,6 +664,11 @@ export default function Home() {
       return;
     }
 
+    if (usage?.isAvailable && usage.remainingThisMonth <= 0) {
+      setError(`今月の診断回数上限（${usage.monthlyLimit}回）に達しました。`);
+      return;
+    }
+
     if (inputMode === "url" && url.trim().length === 0) {
       setError("診断対象ページのURLを入力してください。");
       return;
@@ -521,6 +700,7 @@ export default function Home() {
 
       if (!response.ok) {
         setError("error" in data ? data.error : "診断に失敗しました。");
+        await loadUsage();
         return;
       }
 
@@ -566,45 +746,67 @@ export default function Home() {
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {!session ? (
           <section className="mx-auto max-w-xl rounded-lg border border-line bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-bold text-ink">
-              {authMode === "signIn" ? "ログイン" : "アカウント作成"}
-            </h2>
+            <h2 className="text-xl font-bold text-ink">{getAuthTitle(authMode)}</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              SaaS化を見据えて、診断実行と履歴保存はログイン必須にしています。履歴はユーザーごとに分離されます。
+              診断実行と履歴保存はログイン必須です。履歴はユーザーごとに分離されます。
             </p>
 
             <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
-              <div>
-                <label htmlFor="email" className="text-sm font-semibold text-ink">
-                  メールアドレス
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
-                  autoComplete="email"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="password"
-                  className="text-sm font-semibold text-ink"
-                >
-                  パスワード
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
-                  autoComplete={
-                    authMode === "signIn" ? "current-password" : "new-password"
-                  }
-                />
-              </div>
+              {authMode !== "updatePassword" ? (
+                <div>
+                  <label htmlFor="email" className="text-sm font-semibold text-ink">
+                    メールアドレス
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                    autoComplete="email"
+                  />
+                </div>
+              ) : null}
+
+              {authMode === "signIn" || authMode === "signUp" ? (
+                <div>
+                  <label
+                    htmlFor="password"
+                    className="text-sm font-semibold text-ink"
+                  >
+                    パスワード
+                  </label>
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                    autoComplete={
+                      authMode === "signIn" ? "current-password" : "new-password"
+                    }
+                  />
+                </div>
+              ) : null}
+
+              {authMode === "updatePassword" ? (
+                <div>
+                  <label
+                    htmlFor="new-password"
+                    className="text-sm font-semibold text-ink"
+                  >
+                    新しいパスワード
+                  </label>
+                  <input
+                    id="new-password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                    autoComplete="new-password"
+                  />
+                </div>
+              ) : null}
 
               {authError ? (
                 <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
@@ -624,33 +826,67 @@ export default function Home() {
               >
                 {isAuthLoading
                   ? "処理中..."
-                  : authMode === "signIn"
-                    ? "ログイン"
-                    : "アカウント作成"}
+                  : authMode === "signUp"
+                    ? "アカウント作成"
+                    : authMode === "resetRequest"
+                      ? "リセットメールを送信"
+                      : authMode === "updatePassword"
+                        ? "パスワードを変更"
+                        : "ログイン"}
               </button>
             </form>
 
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode(authMode === "signIn" ? "signUp" : "signIn");
-                setAuthError("");
-                setAuthMessage("");
-              }}
-              className="mt-4 text-sm font-semibold text-accent underline"
-            >
-              {authMode === "signIn"
-                ? "アカウントを作成する"
-                : "ログイン画面に戻る"}
-            </button>
+            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === "signIn" ? "signUp" : "signIn");
+                  setAuthError("");
+                  setAuthMessage("");
+                }}
+                className="font-semibold text-accent underline"
+              >
+                {authMode === "signIn" ? "アカウントを作成する" : "ログイン画面に戻る"}
+              </button>
+              {authMode !== "updatePassword" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("resetRequest");
+                    setAuthError("");
+                    setAuthMessage("");
+                  }}
+                  className="font-semibold text-accent underline"
+                >
+                  パスワードを忘れた場合
+                </button>
+              ) : null}
+            </div>
           </section>
         ) : (
           <>
-            <div className="mb-5 rounded-lg border border-line bg-white p-4 text-sm text-muted shadow-sm">
-              ログイン中:{" "}
-              <span className="font-semibold text-ink">
-                {session.user.email ?? session.user.id}
-              </span>
+            <div className="mb-5 grid gap-4 lg:grid-cols-[1fr_320px]">
+              <div className="rounded-lg border border-line bg-white p-4 text-sm text-muted shadow-sm">
+                ログイン中:{" "}
+                <span className="font-semibold text-ink">
+                  {session.user.email ?? session.user.id}
+                </span>
+              </div>
+              <div className="rounded-lg border border-line bg-white p-4 text-sm shadow-sm">
+                <p className="font-semibold text-ink">今月の診断回数</p>
+                <p className="mt-1 text-muted">
+                  {usage
+                    ? usage.isAvailable
+                      ? `${usage.usedThisMonth} / ${usage.monthlyLimit}回 使用中`
+                      : "制限未設定"
+                    : "取得中..."}
+                </p>
+                {usageNotice ? (
+                  <p className="mt-2 text-xs leading-5 text-amber-700">
+                    {usageNotice}
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
@@ -746,7 +982,10 @@ export default function Home() {
                   <div className="mt-5 flex flex-col gap-3">
                     <button
                       type="submit"
-                      disabled={isLoading}
+                      disabled={
+                        isLoading ||
+                        Boolean(usage?.isAvailable && usage.remainingThisMonth <= 0)
+                      }
                       className="rounded-md bg-accent px-5 py-3 text-sm font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isLoading ? "診断中..." : "診断開始"}
@@ -761,7 +1000,7 @@ export default function Home() {
                       </button>
                     ) : (
                       <p className="text-xs leading-5 text-muted">
-                        JavaScriptで後から描画される本文は抽出できない場合があります。
+                        SSRF対策として、localhost、内部IP、特殊ポート、内部URLへのリダイレクトはブロックします。
                       </p>
                     )}
                   </div>
