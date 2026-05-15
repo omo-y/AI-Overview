@@ -202,6 +202,14 @@ function getAuthTitle(authMode: AuthMode) {
   return "ログイン";
 }
 
+function getHostnameLabel(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 function ScoreTable({ scores }: { scores: RuleScore[] }) {
   return (
     <div className="overflow-x-auto">
@@ -1517,23 +1525,47 @@ export default function Home() {
                       </div>
                       {result.aioQueryResearch.citedUrls.length > 0 ? (
                         <div className="mt-4">
-                          <p className="text-sm font-semibold text-ink">
-                            AI Overviewで引用されたURL
-                          </p>
-                          <ul className="mt-3 space-y-2 text-sm leading-6">
-                            {result.aioQueryResearch.citedUrls.map((citedUrl) => (
-                              <li key={citedUrl}>
-                                <a
-                                  href={citedUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="break-all text-accent underline"
+                          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-ink">
+                                AI Overview引用元URL
+                              </p>
+                              <p className="mt-1 text-xs leading-5 text-muted">
+                                実測クエリでAI Overviewが表示されたときの参照元です。競合記事との比較に使います。
+                              </p>
+                            </div>
+                            <span className="text-xs font-semibold text-muted">
+                              最大5件表示
+                            </span>
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            {result.aioQueryResearch.citedUrls
+                              .slice(0, 5)
+                              .map((citedUrl) => (
+                                <div
+                                  key={citedUrl}
+                                  className="rounded-lg border border-line bg-slate-50 p-3"
                                 >
-                                  {citedUrl}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
+                                  <p className="text-sm font-semibold text-ink">
+                                    {getHostnameLabel(citedUrl)}
+                                  </p>
+                                  <a
+                                    href={citedUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-1 block break-all text-sm text-accent underline"
+                                  >
+                                    {citedUrl}
+                                  </a>
+                                </div>
+                              ))}
+                          </div>
+                          {result.aioQueryResearch.citedUrls.length > 5 ? (
+                            <p className="mt-3 text-xs text-muted">
+                              ほか{result.aioQueryResearch.citedUrls.length - 5}
+                              件の引用元URLがあります。必要な場合は実測クエリを絞って確認してください。
+                            </p>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
