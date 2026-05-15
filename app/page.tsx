@@ -1401,21 +1401,6 @@ export default function Home() {
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
                         <div className="rounded-lg border border-line bg-slate-50 p-4">
                           <p className="text-xs font-semibold text-muted">
-                            AI Overview出現率
-                          </p>
-                          <p className="mt-2 text-2xl font-bold text-ink">
-                            {result.aioQueryResearch.aiOverviewRate}%
-                          </p>
-                          <p className="mt-1 text-xs text-muted">
-                            {result.aioQueryResearch.aiOverviewCount} /{" "}
-                            {result.aioQueryResearch.checkedCount}件
-                          </p>
-                          <p className="mt-2 text-xs leading-5 text-muted">
-                            実測したクエリのうち、検索結果にAI Overviewが表示された割合です。
-                          </p>
-                        </div>
-                        <div className="rounded-lg border border-line bg-slate-50 p-4">
-                          <p className="text-xs font-semibold text-muted">
                             自サイト引用率
                           </p>
                           <p className="mt-2 text-2xl font-bold text-ink">
@@ -1426,21 +1411,36 @@ export default function Home() {
                             {result.aioQueryResearch.checkedCount}件
                           </p>
                           <p className="mt-2 text-xs leading-5 text-muted">
-                            AI Overview内で診断対象サイトが引用・参照された割合です。
+                            AI Overview内で診断対象URLが引用・参照された割合です。
                           </p>
                         </div>
                         <div className="rounded-lg border border-line bg-slate-50 p-4">
                           <p className="text-xs font-semibold text-muted">
-                            想定クエリ数
+                            AI Overview出現
                           </p>
                           <p className="mt-2 text-2xl font-bold text-ink">
-                            {result.aioQueryResearch.generatedQueries.length}
+                            {result.aioQueryResearch.aiOverviewCount}件
                           </p>
                           <p className="mt-1 text-xs text-muted">
-                            実測上限は環境変数で調整できます
+                            {result.aioQueryResearch.aiOverviewCount} /{" "}
+                            {result.aioQueryResearch.checkedCount}件
                           </p>
                           <p className="mt-2 text-xs leading-5 text-muted">
-                            記事内容から抽出した候補です。編集後のクエリだけ実測します。
+                            実測クエリのうち、AI Overviewが表示された件数です。
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-line bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-muted">
+                            実測クエリ数
+                          </p>
+                          <p className="mt-2 text-2xl font-bold text-ink">
+                            {result.aioQueryResearch.checkedCount}
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            候補数: {result.aioQueryResearch.generatedQueries.length}件
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-muted">
+                            編集後に実際にGoogle検索で確認したクエリ数です。
                           </p>
                         </div>
                       </div>
