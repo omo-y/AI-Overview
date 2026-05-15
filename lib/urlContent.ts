@@ -1,14 +1,17 @@
-import { lookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 type FetchUrlResult = {
   text: string;
   finalUrl: string;
+  warnings: string[];
 };
 
 const MAX_EXTRACTED_LENGTH = 20_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
+const FETCH_TIMEOUT_MS = 12_000;
 const ALLOWED_PORTS = new Set(["", "80", "443"]);
 const BLOCKED_HOSTNAMES = new Set(["localhost", "localhost.localdomain"]);
 
@@ -119,11 +122,13 @@ function parseHttpUrl(url: string): URL {
   }
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error("URLは http または https のページを指定してください。");
+    throw new Error("URLは http または https のページのみ診断できます。");
   }
 
   if (parsed.username || parsed.password) {
-    throw new Error("ユーザー名やパスワードを含むURLは診断できません。");
+    throw new Error(
+      "ユーザー名やパスワードを含むURLは診断できません。"
+    );
   }
 
   if (!ALLOWED_PORTS.has(parsed.port)) {
@@ -131,6 +136,14 @@ function parseHttpUrl(url: string): URL {
   }
 
   return parsed;
+}
+
+function isProbablyDomainOnlyUrl(url: URL) {
+  return (
+    (url.pathname === "" || url.pathname === "/") &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+  );
 }
 
 function isPrivateIpv4(address: string): boolean {
@@ -187,11 +200,15 @@ async function validatePublicHttpUrl(url: URL) {
   const hostname = url.hostname.toLowerCase();
 
   if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith(".localhost")) {
-    throw new Error("ローカルホストや内部ネットワークのURLは診断できません。");
+    throw new Error(
+      "localhostや内部ネットワークのURLは診断できません。公開されている記事URLを指定してください。"
+    );
   }
 
   if (isIP(hostname) && isBlockedIpAddress(hostname)) {
-    throw new Error("ローカルホストや内部ネットワークのURLは診断できません。");
+    throw new Error(
+      "localhostや内部ネットワークのURLは診断できません。公開されている記事URLを指定してください。"
+    );
   }
 
   let addresses: LookupAddress[];
@@ -202,22 +219,63 @@ async function validatePublicHttpUrl(url: URL) {
       verbatim: true
     });
   } catch {
-    throw new Error("URLのホスト名を解決できませんでした。");
+    throw new Error("URLのホスト名を解決できませんでした。URLを確認してください。");
   }
 
   if (addresses.length === 0) {
-    throw new Error("URLのホスト名を解決できませんでした。");
+    throw new Error("URLのホスト名を解決できませんでした。URLを確認してください。");
   }
 
   if (addresses.some((address) => isBlockedIpAddress(address.address))) {
-    throw new Error("ローカルホストや内部ネットワークに接続するURLは診断できません。");
+    throw new Error(
+      "内部ネットワークに接続するURLは診断できません。公開されている記事URLを指定してください。"
+    );
   }
+}
+
+async function readResponseTextWithLimit(response: Response) {
+  const contentLength = response.headers.get("content-length");
+
+  if (contentLength && Number.parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+    throw new Error(
+      "対象ページのサイズが大きすぎるため診断できません。記事ページのURLを指定してください。"
+    );
+  }
+
+  if (!response.body) {
+    return response.text();
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    receivedBytes += value.length;
+
+    if (receivedBytes > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(
+        "対象ページのサイズが大きすぎるため診断できません。記事ページのURLを指定してください。"
+      );
+    }
+
+    chunks.push(value);
+  }
+
+  return new TextDecoder("utf-8").decode(Buffer.concat(chunks));
 }
 
 async function fetchWithSafeRedirects(
   initialUrl: URL,
   signal: AbortSignal
-): Promise<Response> {
+): Promise<{ response: Response; finalUrl: URL; redirectCount: number }> {
   let currentUrl = initialUrl;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
@@ -233,28 +291,61 @@ async function fetchWithSafeRedirects(
     });
 
     if (![301, 302, 303, 307, 308].includes(response.status)) {
-      return response;
+      return {
+        response,
+        finalUrl: currentUrl,
+        redirectCount
+      };
     }
 
     const location = response.headers.get("location");
 
     if (!location) {
-      return response;
+      return {
+        response,
+        finalUrl: currentUrl,
+        redirectCount
+      };
     }
 
     currentUrl = parseHttpUrl(new URL(location, currentUrl).toString());
   }
 
-  throw new Error("リダイレクトが多すぎるため、URL診断を中止しました。");
+  throw new Error(
+    "リダイレクトが多すぎるためURL診断を中止しました。記事の最終URLを直接指定してください。"
+  );
 }
 
 export async function fetchTextFromUrl(url: string): Promise<FetchUrlResult> {
   const parsedUrl = parseHttpUrl(url.trim());
+  const warnings: string[] = [];
+
+  if (isProbablyDomainOnlyUrl(parsedUrl)) {
+    warnings.push(
+      "ドメイン直下のURLです。トップページの可能性があるため、記事ページURLを指定すると診断精度が上がります。"
+    );
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20_000);
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetchWithSafeRedirects(parsedUrl, controller.signal);
+    const { response, finalUrl, redirectCount } = await fetchWithSafeRedirects(
+      parsedUrl,
+      controller.signal
+    );
+
+    if (redirectCount > 0) {
+      warnings.push(
+        `入力URLから${redirectCount}回リダイレクトされました。診断には最終URLを使用しています。`
+      );
+    }
+
+    if (isProbablyDomainOnlyUrl(finalUrl) && !isProbablyDomainOnlyUrl(parsedUrl)) {
+      warnings.push(
+        "リダイレクト後のURLがドメイン直下です。記事本文ではなくトップページを診断している可能性があります。"
+      );
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -269,27 +360,32 @@ export async function fetchTextFromUrl(url: string): Promise<FetchUrlResult> {
       !contentType.includes("text/html") &&
       !contentType.includes("text/plain")
     ) {
-      throw new Error("HTMLまたはテキストページではないため診断できません。");
+      throw new Error(
+        "HTMLまたはテキストのページではないため診断できません。記事ページのURLを指定してください。"
+      );
     }
 
-    const rawText = await response.text();
+    const rawText = await readResponseTextWithLimit(response);
     const text = contentType.includes("text/plain")
       ? rawText.trim().slice(0, MAX_EXTRACTED_LENGTH)
       : htmlToDiagnosticText(rawText);
 
     if (text.length < 100) {
       throw new Error(
-        "URLから本文を十分に抽出できませんでした。本文入力欄に直接貼り付けて診断してください。"
+        "URLから本文を十分に抽出できませんでした。記事本文を直接貼り付けて診断してください。"
       );
     }
 
     return {
       text,
-      finalUrl: response.url || parsedUrl.toString()
+      finalUrl: finalUrl.toString(),
+      warnings
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("ページ取得がタイムアウトしました。URLを確認してください。");
+      throw new Error(
+        "対象URLの応答に時間がかかりすぎたため診断できませんでした。URLやサイトの状態を確認してください。"
+      );
     }
 
     throw error instanceof Error

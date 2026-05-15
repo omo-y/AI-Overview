@@ -1243,6 +1243,16 @@ export default function Home() {
                             {result.sourceUrl}
                           </a>
                         ) : null}
+                        {result.sourceWarnings?.length ? (
+                          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                            <p className="font-semibold">URL診断の注意</p>
+                            <ul className="mt-2 list-disc space-y-1 pl-5">
+                              {result.sourceWarnings.map((warning) => (
+                                <li key={warning}>{warning}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 

@@ -57,6 +57,7 @@ export async function POST(request: Request) {
   let article = "";
   let sourceType: AnalysisResult["sourceType"] = "text";
   let sourceUrl: string | undefined;
+  let sourceWarnings: string[] = [];
 
   if (hasUrl) {
     try {
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
       article = fetched.text;
       sourceType = "url";
       sourceUrl = fetched.finalUrl;
+      sourceWarnings = fetched.warnings;
     } catch (error) {
       return NextResponse.json<AnalyzeErrorResponse>(
         {
@@ -120,6 +122,7 @@ export async function POST(request: Request) {
     llmStatus: llmResult.status,
     sourceType,
     ...(sourceUrl ? { sourceUrl } : {}),
+    ...(sourceWarnings.length > 0 ? { sourceWarnings } : {}),
     analyzedTextLength: article.length,
     analyzedTextPreview: article.slice(0, 100),
     ...(llmResult.status === "fallback" ? { llmError: llmResult.error } : {})
