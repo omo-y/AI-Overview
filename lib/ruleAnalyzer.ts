@@ -49,19 +49,17 @@ const evidenceKeywords = [
   "資料",
   "リンク",
   "根拠",
-  "公表",
-  "2024",
-  "2025",
-  "2026"
+  "公表"
 ];
 
 const strongEvidencePatterns = [
   /https?:\/\//i,
   /go\.jp|lg\.jp|or\.jp|ac\.jp/i,
-  /google\.com|developers\.google\.com|support\.google\.com/i,
+  /developers\.google\.com|support\.google\.com/i,
   /pdf/i,
-  /[0-9]{4}年/,
-  /[0-9]+(?:\.[0-9]+)?%/
+  /20[0-9]{2}年/,
+  /[0-9]+(?:\.[0-9]+)?%/,
+  /[0-9,]+(?:件|社|人|円|回|年)/
 ];
 
 const eeatKeywords = [
@@ -82,7 +80,7 @@ const eeatKeywords = [
 const faqKeywords = ["FAQ", "よくある質問", "Q.", "Q：", "質問", "Q&A"];
 const comparisonKeywords = ["比較", "違い", "メリット", "デメリット", "選び方"];
 const priceKeywords = ["料金", "費用", "価格", "相場", "いくら"];
-const howToKeywords = ["方法", "手順", "流れ", "やり方", "ステップ", "使い方"];
+const howToKeywords = ["方法", "手順", "流れ", "やり方", "ステップ", "使い方", "対策"];
 const localKeywords = ["東京", "大阪", "神奈川", "埼玉", "千葉", "地域", "エリア", "市", "区"];
 const troubleshootingKeywords = ["原因", "対処", "解決", "できない", "エラー", "故障", "トラブル"];
 
@@ -117,25 +115,12 @@ function getParagraphs(text: string): string[] {
 }
 
 function detectSearchIntent(text: string, headings: string[]): SearchIntentType {
-  const joinedHeadings = headings.join("\n");
-  const target = `${joinedHeadings}\n${text.slice(0, 1500)}`;
+  const target = `${headings.join("\n")}\n${text.slice(0, 1500)}`;
   const candidates: Array<{ type: SearchIntentType; score: number }> = [
-    {
-      type: "howTo",
-      score: countKeywordMatches(target, howToKeywords)
-    },
-    {
-      type: "comparison",
-      score: countKeywordMatches(target, comparisonKeywords)
-    },
-    {
-      type: "price",
-      score: countKeywordMatches(target, priceKeywords)
-    },
-    {
-      type: "local",
-      score: countKeywordMatches(target, localKeywords)
-    },
+    { type: "howTo", score: countKeywordMatches(target, howToKeywords) },
+    { type: "comparison", score: countKeywordMatches(target, comparisonKeywords) },
+    { type: "price", score: countKeywordMatches(target, priceKeywords) },
+    { type: "local", score: countKeywordMatches(target, localKeywords) },
     {
       type: "troubleshooting",
       score: countKeywordMatches(target, troubleshootingKeywords)
@@ -145,8 +130,8 @@ function detectSearchIntent(text: string, headings: string[]): SearchIntentType 
       score: countKeywordMatches(target, ["とは", "意味", "概要", "基本"])
     }
   ];
-
   const [best] = candidates.sort((a, b) => b.score - a.score);
+
   return best && best.score > 0 ? best.type : "general";
 }
 
@@ -271,7 +256,7 @@ function scoreEvidence(text: string): RuleScore {
   const strongEvidenceCount = strongEvidencePatterns.filter((pattern) =>
     pattern.test(text)
   ).length;
-  const score = clampScore(keywordCount * 1.2 + strongEvidenceCount * 2);
+  const score = clampScore(keywordCount * 1.2 + strongEvidenceCount * 1.5);
 
   return {
     item: "根拠・一次情報",
@@ -325,7 +310,6 @@ function scoreSearchIntentFit(intent: SearchIntentType, text: string): RuleScore
   const hasPrice = countKeywordMatches(text, priceKeywords) > 0;
   const hasHowTo = countKeywordMatches(text, howToKeywords) > 0;
   const hasTrouble = countKeywordMatches(text, troubleshootingKeywords) > 0;
-
   const intentChecks: Record<SearchIntentType, boolean[]> = {
     definition: [hasFaq, hasEvidence, hasBullets],
     howTo: [hasHowTo, hasBullets, hasFaq],
@@ -345,18 +329,27 @@ function scoreSearchIntentFit(intent: SearchIntentType, text: string): RuleScore
 }
 
 function scoreEvidenceQuality(text: string): RuleScore {
-  const keywordCount = countKeywordMatches(text, evidenceKeywords);
+  const evidenceKeywordKinds = countKeywordMatches(text, evidenceKeywords);
   const strongEvidenceCount = strongEvidencePatterns.filter((pattern) =>
     pattern.test(text)
   ).length;
-  const score = clampScore(keywordCount + strongEvidenceCount * 2.5);
+  const hasExternalUrl = /https?:\/\//i.test(text);
+  const hasNumber = /[0-9]+(?:\.[0-9]+)?%|[0-9,]+(?:件|社|人|円|回|年)/.test(text);
+  const hasOfficialLikeSource =
+    /公式|公表|出典|引用|参考|調査|統計|資料|go\.jp|lg\.jp|or\.jp|ac\.jp/i.test(text);
+  const qualitySignals = [hasExternalUrl, hasNumber, hasOfficialLikeSource].filter(Boolean).length;
+  const score = clampScore(
+    Math.min(evidenceKeywordKinds, 4) * 1.1 +
+      Math.min(strongEvidenceCount, 3) * 1.2 +
+      qualitySignals * 1.2
+  );
 
   return {
     item: "根拠の質",
     score,
     comment:
       score >= 7
-        ? "根拠の存在だけでなく、URL、年次、数値など検証しやすい情報が含まれています。"
+        ? "根拠キーワードだけでなく、URL、年次、数値など検証しやすい情報が含まれています。"
         : "根拠キーワードだけでなく、公式URL、調査年、数値、一次資料名を明記すると精度が上がります。"
   };
 }
@@ -374,7 +367,17 @@ function scoreAnswerability(text: string, headings: string[]): RuleScore {
   const questionHeadingCount = headings.filter((heading) =>
     hasAnyKeyword(heading, questionHeadingKeywords)
   ).length;
-  const score = clampScore(conciseAnswerBlocks * 2 + questionHeadingCount * 1.5);
+  const headingCount = Math.max(headings.length, 1);
+  const paragraphCount = Math.max(paragraphs.length, 1);
+  const answerBlockRatio = conciseAnswerBlocks / paragraphCount;
+  const questionHeadingRatio = questionHeadingCount / headingCount;
+  const hasIntroConclusion = hasAnyKeyword(text.slice(0, 300), conclusionKeywords);
+  const score = clampScore(
+    answerBlockRatio * 5 +
+      questionHeadingRatio * 3 +
+      Math.min(conciseAnswerBlocks, 3) * 0.6 +
+      (hasIntroConclusion ? 1 : 0)
+  );
 
   return {
     item: "回答可能性",
@@ -391,19 +394,23 @@ function scoreQueryCoverage(intent: SearchIntentType, text: string, headings: st
     hasAnyKeyword(heading, questionHeadingKeywords)
   ).length;
   const faqCount = (text.match(/Q[.：]/g) ?? []).length;
-  const relatedTopicCount = countKeywordMatches(text, [
-    ...comparisonKeywords,
-    ...priceKeywords,
-    ...howToKeywords,
-    ...troubleshootingKeywords,
-    "注意点",
-    "失敗",
-    "代替",
-    "メリット",
-    "デメリット"
-  ]);
+  const topicGroups = [
+    countKeywordMatches(text, comparisonKeywords) > 0,
+    countKeywordMatches(text, priceKeywords) > 0,
+    countKeywordMatches(text, howToKeywords) > 0,
+    countKeywordMatches(text, troubleshootingKeywords) > 0,
+    hasAnyKeyword(text, ["注意点", "失敗", "代替", "メリット", "デメリット"])
+  ];
+  const coveredTopicGroups = topicGroups.filter(Boolean).length;
   const intentBonus = intent === "general" ? 0 : 1;
-  const score = clampScore(questionCount * 1.5 + faqCount + relatedTopicCount * 0.5 + intentBonus);
+  const headingCount = Math.max(headings.length, 1);
+  const questionRatio = questionCount / headingCount;
+  const score = clampScore(
+    questionRatio * 3 +
+      Math.min(faqCount, 5) * 0.7 +
+      coveredTopicGroups * 1.1 +
+      intentBonus
+  );
 
   return {
     item: "想定質問カバー率",
@@ -439,7 +446,6 @@ function buildSchemaSuggestions(text: string, intent: SearchIntentType): string[
 
 function buildDiagnosticInsights(
   text: string,
-  headings: string[],
   intent: SearchIntentType,
   evidenceQualityScore: number,
   answerabilityScore: number,
@@ -496,7 +502,6 @@ export function analyzeRules(text: string): RuleAnalysis {
     answerability,
     queryCoverage
   ];
-
   const totalScore = Math.round(
     (ruleScores.reduce((sum, item) => sum + item.score, 0) /
       (ruleScores.length * 10)) *
@@ -508,7 +513,6 @@ export function analyzeRules(text: string): RuleAnalysis {
     ruleScores,
     diagnosticInsights: buildDiagnosticInsights(
       normalizedText,
-      headings,
       searchIntent,
       evidenceQuality.score,
       answerability.score,
