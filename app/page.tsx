@@ -866,19 +866,21 @@ export default function Home() {
               Local LLM + Rule Based
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-normal text-ink sm:text-3xl">
-              AI Overview險ｺ譁ｭ繝・・繝ｫ
+              AI Overview診断ツール
             </h1>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <span className="rounded-full border border-line bg-slate-50 px-4 py-2 text-sm text-muted">
-              OpenAI API縺ｪ縺・/ Supabase Postgres / 繝ｭ繧ｰ繧､繝ｳ蠢・・            </span>
+              OpenAI APIなし / Supabase Postgres / ログイン必須
+            </span>
             {session ? (
               <button
                 type="button"
                 onClick={clearSession}
                 className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
               >
-                繝ｭ繧ｰ繧｢繧ｦ繝・              </button>
+                ログアウト
+              </button>
             ) : null}
           </div>
         </div>
@@ -889,13 +891,14 @@ export default function Home() {
           <section className="mx-auto max-w-xl rounded-lg border border-line bg-white p-6 shadow-sm">
             <h2 className="text-xl font-bold text-ink">{getAuthTitle(authMode)}</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              險ｺ譁ｭ螳溯｡後→螻･豁ｴ菫晏ｭ倥・繝ｭ繧ｰ繧､繝ｳ蠢・医〒縺吶ょｱ･豁ｴ縺ｯ繝ｦ繝ｼ繧ｶ繝ｼ縺斐→縺ｫ蛻・屬縺輔ｌ縺ｾ縺吶・            </p>
+              診断実行と履歴保存にはログインが必要です。履歴はユーザーごとに分離されます。
+            </p>
 
             <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
               {authMode !== "updatePassword" ? (
                 <div>
                   <label htmlFor="email" className="text-sm font-semibold text-ink">
-                    繝｡繝ｼ繝ｫ繧｢繝峨Ξ繧ｹ
+                    メールアドレス
                   </label>
                   <input
                     id="email"
@@ -914,7 +917,8 @@ export default function Home() {
                     htmlFor="password"
                     className="text-sm font-semibold text-ink"
                   >
-                    繝代せ繝ｯ繝ｼ繝・                  </label>
+                    パスワード
+                  </label>
                   <input
                     id="password"
                     type="password"
@@ -934,7 +938,8 @@ export default function Home() {
                     htmlFor="new-password"
                     className="text-sm font-semibold text-ink"
                   >
-                    譁ｰ縺励＞繝代せ繝ｯ繝ｼ繝・                  </label>
+                    新しいパスワード
+                  </label>
                   <input
                     id="new-password"
                     type="password"
@@ -1032,9 +1037,10 @@ export default function Home() {
             <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
               <section className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start">
                 <div className="mb-5">
-                  <h2 className="text-lg font-bold text-ink">險ｺ譁ｭ蟇ｾ雎｡</h2>
+                  <h2 className="text-lg font-bold text-ink">診断対象</h2>
                   <p className="mt-2 text-sm leading-6 text-muted">
-                    URL縺ｾ縺溘・險倅ｺ区悽譁・°繧峨、I讀懃ｴ｢縺ｫ蠑慕畑縺輔ｌ繧・☆縺・ｧ矩縺九ｒ險ｺ譁ｭ縺励∪縺吶・                  </p>
+                    URLまたは記事本文から、AI検索に引用されやすい構造かを診断します。
+                  </p>
                 </div>
 
                 <form onSubmit={handleSubmit}>
@@ -1049,7 +1055,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      URL縺ｧ險ｺ譁ｭ
+                      URLで診断
                     </button>
                     <button
                       type="button"
@@ -1061,7 +1067,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      譛ｬ譁・〒險ｺ譁ｭ
+                      本文で診断
                     </button>
                   </div>
 
@@ -1071,7 +1077,7 @@ export default function Home() {
                         htmlFor="target-url"
                         className="text-sm font-semibold text-ink"
                       >
-                        險ｺ譁ｭ蟇ｾ雎｡繝壹・繧ｸURL
+                        診断対象ページURL
                       </label>
                       <input
                         id="target-url"
@@ -1162,7 +1168,8 @@ export default function Home() {
 
                 {!result && !error ? (
                   <div className="rounded-lg border border-dashed border-line bg-white p-8 text-center text-sm text-muted">
-                    險ｺ譁ｭ繧帝幕蟋九☆繧九→縲√％縺薙↓邨先棡繧ｫ繝ｼ繝峨′陦ｨ遉ｺ縺輔ｌ縺ｾ縺吶・                  </div>
+                    診断を開始すると、ここに結果カードが表示されます。
+                  </div>
                 ) : null}
 
                 {result ? (
@@ -1178,7 +1185,7 @@ export default function Home() {
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <p className="text-sm font-semibold text-muted">
-                              邱丞粋繧ｹ繧ｳ繧｢
+                              総合スコア
                             </p>
                             <p
                               className={`mt-3 text-7xl font-bold leading-none ${getScoreTone(
@@ -1200,18 +1207,19 @@ export default function Home() {
                             style={{ width: `${result.totalScore}%` }}
                           />
                         </div>
-                        <p className="mt-3 text-sm text-muted">100轤ｹ貅轤ｹ</p>
+                        <p className="mt-3 text-sm text-muted">100点満点</p>
                       </div>
 
                       <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
                         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <h3 className="text-lg font-bold text-ink">
-                            隧穂ｾ｡繧ｵ繝槭Μ繝ｼ
+                            評価サマリー
                           </h3>
                           <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
-                            {result.sourceType === "url" ? "URL險ｺ譁ｭ" : "譛ｬ譁・ｨｺ譁ｭ"} /{" "}
+                            {result.sourceType === "url" ? "URL診断" : "本文診断"} /{" "}
                             {result.analyzedTextLength.toLocaleString("ja-JP")}
-                            譁・ｭ・                          </span>
+                            文字
+                          </span>
                         </div>
                         <p className="leading-7 text-muted">{result.summary}</p>
                         {result.sourceUrl ? (
@@ -1230,16 +1238,16 @@ export default function Home() {
                     <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
                       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <h3 className="text-lg font-bold text-ink">
-                          鬆・岼蛻･繧ｹ繧ｳ繧｢
+                          項目別スコア
                         </h3>
-                        <span className="text-sm text-muted">0縲・0轤ｹ縺ｧ隧穂ｾ｡</span>
+                        <span className="text-sm text-muted">0〜10点で評価</span>
                       </div>
                       <ScoreTable scores={result.ruleScores} />
                     </div>
 
                     <div className="grid gap-6 xl:grid-cols-2">
                       <div>
-                        <h3 className="text-lg font-bold text-ink">謾ｹ蝟・☆縺ｹ縺咲せ</h3>
+                        <h3 className="text-lg font-bold text-ink">改善すべき点</h3>
                         <div className="mt-4 space-y-3">
                           {result.problems.map((problem, index) => (
                             <div
@@ -1247,7 +1255,7 @@ export default function Home() {
                               className="rounded-lg border border-rose-100 bg-rose-50 p-4"
                             >
                               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-rose-700">
-                                隱ｲ鬘・{index + 1}
+                                課題 {index + 1}
                               </span>
                               <p className="mt-2 text-sm leading-6 text-rose-950">
                                 {problem}
@@ -1334,9 +1342,10 @@ export default function Home() {
             <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
               <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-ink">險ｺ譁ｭ繝・・繧ｿ</h2>
+                  <h2 className="text-lg font-bold text-ink">診断データ</h2>
                   <p className="mt-1 text-sm text-muted">
-                    閾ｪ蛻・・螻･豁ｴ縺ｨ鬮倥せ繧ｳ繧｢繧ｵ繧､繝医ｒ遒ｺ隱阪〒縺阪∪縺吶ょ・菴薙Λ繝ｳ繧ｭ繝ｳ繧ｰ縺ｯ蜈ｬ髢玖ｨｱ蜿ｯ縺輔ｌ縺欟RL縺ｮ縺ｿ陦ｨ遉ｺ縺励∪縺吶・                  </p>
+                    自分の履歴と高スコアサイトを確認できます。全体ランキングは公開許可されたURLのみ表示します。
+                  </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
@@ -1349,7 +1358,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      險ｺ譁ｭ螻･豁ｴ
+                      診断履歴
                     </button>
                     <button
                       type="button"
@@ -1360,7 +1369,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      鬮倥せ繧ｳ繧｢繧ｵ繧､繝・驕ｸ
+                      高スコアサイト5選
                     </button>
                   </div>
                   <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
@@ -1380,7 +1389,8 @@ export default function Home() {
                         : "text-muted hover:text-ink"
                     }`}
                   >
-                    閾ｪ蛻・□縺・                  </button>
+                    自分だけ
+                  </button>
                   <button
                     type="button"
                     onClick={() => setTopSitesScope("public")}
