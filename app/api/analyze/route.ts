@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  createSkippedAioQueryResearch,
+  generateExpectedQueries
+} from "@/lib/aioQueryResearch";
 import { generateLlmSuggestions } from "@/lib/ollama";
 import { analyzeRules } from "@/lib/ruleAnalyzer";
 import {
@@ -108,6 +112,11 @@ export async function POST(request: Request) {
     ruleAnalysis.totalScore,
     ruleAnalysis.ruleScores
   );
+  const generatedQueries = generateExpectedQueries(
+    article,
+    ruleAnalysis.diagnosticInsights
+  );
+  const aioQueryResearch = createSkippedAioQueryResearch(generatedQueries);
 
   try {
     await recordDiagnosisUsage(user.id);
@@ -119,6 +128,7 @@ export async function POST(request: Request) {
     totalScore: ruleAnalysis.totalScore,
     ruleScores: ruleAnalysis.ruleScores,
     diagnosticInsights: ruleAnalysis.diagnosticInsights,
+    aioQueryResearch,
     ...llmResult.data,
     llmStatus: llmResult.status,
     sourceType,

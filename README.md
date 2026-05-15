@@ -18,6 +18,7 @@ URLまたは本文を入力すると、AI OverviewやAI検索で引用されや�
 - URL診断のSSRF対策
 - パスワードリセット
 - 管理者用ユーザー一覧と対象ユーザー別の今月分診断回数リセット
+- 記事から想定クエリを抽出するAI Overview実測チェック
 
 ## 必要なもの
 
@@ -42,9 +43,15 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 MONTHLY_DIAGNOSIS_LIMIT=10
+SERPAPI_API_KEY=
+AIO_QUERY_CHECK_LIMIT=5
 ```
 
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` はブラウザ側のログイン処理で使います。`SUPABASE_SERVICE_ROLE_KEY` はサーバー側だけで使い、ブラウザに出してはいけません。
+
+`SERPAPI_API_KEY` は任意です。未設定の場合、AI Overview実測チェックは想定クエリ候補の編集まで使えます。設定すると、ユーザーが確定したクエリだけをSerpApi経由で実測できます。
+
+`AIO_QUERY_CHECK_LIMIT` は1回の実測で確認するクエリ数です。API利用料を抑えるため、最初は `5` 程度がおすすめです。
 
 ## Ollamaの準備
 
@@ -116,6 +123,27 @@ http://localhost:3000
 ```env
 MONTHLY_DIAGNOSIS_LIMIT=10
 ```
+
+## AI Overview実測チェック
+
+診断時に記事タイトル、見出し、FAQ、検索意図タイプから想定クエリ候補を最大10件抽出します。
+
+抽出されたクエリは画面で編集できます。API料金の無駄を防ぐため、診断直後に自動実測は行いません。
+
+`SERPAPI_API_KEY` を設定したうえで「実測チェックを実行」ボタンを押すと、編集後の確定クエリをSerpApi経由で実測し、以下を表示します。
+
+- AI Overview出現率
+- 自サイト引用率
+- 想定クエリ一覧
+- クエリ別のAI Overview有無
+- AI Overviewで引用されたURL
+
+```env
+SERPAPI_API_KEY=your-serpapi-key
+AIO_QUERY_CHECK_LIMIT=5
+```
+
+Google検索結果は地域、言語、日時で変わります。この機能は傾向把握用であり、Search Consoleの公式データではありません。
 
 ## 管理者の設定
 
@@ -214,6 +242,7 @@ app/
         reset/
           route.ts
 lib/
+  aioQueryResearch.ts
   aiOverviewKnowledge.ts
   ollama.ts
   ruleAnalyzer.ts

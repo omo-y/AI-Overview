@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AnalysisResult,
   AnalyzeErrorResponse,
+  AioQueryResearch,
   RuleScore,
   UsageSummary
 } from "@/types/analysis";
@@ -87,6 +88,10 @@ type AdminUserItem = {
 type AdminUsersResponse = {
   users: AdminUserItem[];
   error?: string;
+};
+
+type AioResearchErrorResponse = {
+  error: string;
 };
 
 const SESSION_STORAGE_KEY = "ai-overview-auth-session";
@@ -279,6 +284,9 @@ export default function Home() {
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [aioQueryInput, setAioQueryInput] = useState("");
+  const [isAioResearchLoading, setIsAioResearchLoading] = useState(false);
+  const [aioResearchError, setAioResearchError] = useState("");
 
   const characterCount = useMemo(() => text.trim().length, [text]);
 
@@ -315,6 +323,8 @@ export default function Home() {
     setAdminMessage("");
     setResettingUserId("");
     setResult(null);
+    setAioQueryInput("");
+    setAioResearchError("");
   }, []);
 
   const saveSession = useCallback((nextSession: AuthSession) => {
@@ -826,10 +836,65 @@ export default function Home() {
     });
   }
 
+  async function handleRunAioResearch() {
+    if (!authHeaders || !result) {
+      return;
+    }
+
+    const queries = aioQueryInput
+      .split("\n")
+      .map((query) => query.trim())
+      .filter(Boolean);
+
+    if (queries.length === 0) {
+      setAioResearchError("実測対象のクエリを1件以上入力してください。");
+      return;
+    }
+
+    setIsAioResearchLoading(true);
+    setAioResearchError("");
+
+    try {
+      const response = await fetch("/api/aio-research", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          queries,
+          sourceUrl: result.sourceUrl
+        })
+      });
+      const data = (await response.json()) as
+        | AioQueryResearch
+        | AioResearchErrorResponse;
+
+      if (!response.ok) {
+        setAioResearchError(
+          "error" in data ? data.error : "AI Overview実測チェックに失敗しました。"
+        );
+        return;
+      }
+
+      setResult({
+        ...result,
+        aioQueryResearch: data as AioQueryResearch
+      });
+    } catch (researchError) {
+      console.error("[AIO research failed]", researchError);
+      setAioResearchError("AI Overview実測チェックに失敗しました。");
+    } finally {
+      setIsAioResearchLoading(false);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setResult(null);
+    setAioQueryInput("");
+    setAioResearchError("");
 
     if (!authHeaders) {
       setError("診断を実行するにはログインが必要です。");
@@ -878,6 +943,7 @@ export default function Home() {
 
       const analysisResult = data as AnalysisResult;
       setResult(analysisResult);
+      setAioQueryInput(analysisResult.aioQueryResearch.generatedQueries.join("\n"));
       await saveHistoryItem(analysisResult);
     } catch {
       setError(
@@ -1274,6 +1340,162 @@ export default function Home() {
                           </div>
                         ) : null}
                       </div>
+                    </div>
+
+                    <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="text-lg font-bold text-ink">
+                            AI Overview実測チェック
+                          </h3>
+                          <p className="mt-1 text-sm text-muted">
+                            記事から想定クエリ候補を抽出します。必要に応じて編集してから実測チェックを実行してください。
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+                          {result.aioQueryResearch.status === "skipped"
+                            ? "想定クエリのみ"
+                            : result.aioQueryResearch.status === "partial"
+                              ? "一部取得"
+                              : "実測済み"}
+                        </span>
+                      </div>
+                      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                        {result.aioQueryResearch.message}
+                      </p>
+                      <div className="mt-4">
+                        <label
+                          htmlFor="aio-query-input"
+                          className="text-sm font-semibold text-ink"
+                        >
+                          実測対象クエリ
+                        </label>
+                        <textarea
+                          id="aio-query-input"
+                          value={aioQueryInput}
+                          onChange={(event) => setAioQueryInput(event.target.value)}
+                          className="mt-2 min-h-36 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-6 outline-none transition focus:border-accent focus:ring-2 focus:ring-teal-100"
+                          placeholder="1行に1クエリずつ入力してください"
+                        />
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs leading-5 text-muted">
+                            API料金の無駄を防ぐため、実測は編集後の確定クエリだけで行います。
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleRunAioResearch}
+                            disabled={isAioResearchLoading}
+                            className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isAioResearchLoading
+                              ? "実測チェック中..."
+                              : "実測チェックを実行"}
+                          </button>
+                        </div>
+                        {aioResearchError ? (
+                          <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                            {aioResearchError}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <div className="rounded-lg border border-line bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-muted">
+                            AI Overview出現率
+                          </p>
+                          <p className="mt-2 text-2xl font-bold text-ink">
+                            {result.aioQueryResearch.aiOverviewRate}%
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            {result.aioQueryResearch.aiOverviewCount} /{" "}
+                            {result.aioQueryResearch.checkedCount}件
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-line bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-muted">
+                            自サイト引用率
+                          </p>
+                          <p className="mt-2 text-2xl font-bold text-ink">
+                            {result.aioQueryResearch.ownSiteCitationRate}%
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            {result.aioQueryResearch.ownSiteCitationCount} /{" "}
+                            {result.aioQueryResearch.checkedCount}件
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-line bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-muted">
+                            想定クエリ数
+                          </p>
+                          <p className="mt-2 text-2xl font-bold text-ink">
+                            {result.aioQueryResearch.generatedQueries.length}
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            実測上限は環境変数で調整できます
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">
+                            実測結果
+                          </p>
+                          <div className="mt-3 space-y-2">
+                            {result.aioQueryResearch.checks.map((check) => (
+                              <div
+                                key={check.query}
+                                className="rounded-lg border border-line p-3 text-sm"
+                              >
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                  <p className="font-semibold text-ink">
+                                    {check.query}
+                                  </p>
+                                  <span className="text-xs font-semibold text-muted">
+                                    {check.status === "skipped"
+                                      ? "未実測"
+                                      : check.status === "error"
+                                        ? "取得失敗"
+                                        : check.aiOverviewFound
+                                          ? "AI Overviewあり"
+                                          : "AI Overviewなし"}
+                                  </span>
+                                </div>
+                                {check.ownSiteCited ? (
+                                  <p className="mt-2 text-xs font-semibold text-emerald-700">
+                                    自サイト引用あり
+                                  </p>
+                                ) : null}
+                                {check.error ? (
+                                  <p className="mt-2 text-xs text-rose-700">
+                                    {check.error}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      {result.aioQueryResearch.citedUrls.length > 0 ? (
+                        <div className="mt-4">
+                          <p className="text-sm font-semibold text-ink">
+                            AI Overviewで引用されたURL
+                          </p>
+                          <ul className="mt-3 space-y-2 text-sm leading-6">
+                            {result.aioQueryResearch.citedUrls.map((citedUrl) => (
+                              <li key={citedUrl}>
+                                <a
+                                  href={citedUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="break-all text-accent underline"
+                                >
+                                  {citedUrl}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
