@@ -18,6 +18,7 @@ type SupabaseUsageRow = {
 
 type SupabaseProfileRow = {
   user_id: string;
+  email: string | null;
   role: "user" | "admin";
   created_at: string;
 };
@@ -41,6 +42,14 @@ export type UsageSummary = {
   message?: string;
 };
 
+export type AdminUserItem = {
+  userId: string;
+  email: string | null;
+  role: "user" | "admin";
+  createdAt: string;
+  usage: UsageSummary;
+};
+
 type InsertHistoryInput = {
   userId: string;
   inputPreview: string;
@@ -53,7 +62,7 @@ type InsertHistoryInput = {
 const HISTORY_SELECT =
   "id,user_id,created_at,input_preview,source_url,total_score,summary,is_public";
 const USAGE_SELECT = "id,user_id,action,created_at";
-const PROFILE_SELECT = "user_id,role,created_at";
+const PROFILE_SELECT = "user_id,email,role,created_at";
 const DEFAULT_MONTHLY_DIAGNOSIS_LIMIT = 10;
 const USAGE_TABLE_MISSING_MESSAGE =
   "利用回数テーブルが未作成です。診断は実行できますが、月間回数制限はまだ有効ではありません。";
@@ -63,7 +72,9 @@ function getSupabaseConfig() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {
-    throw new Error("Supabase設定が不足しています。.env.local を確認してください。");
+    throw new Error(
+      "Supabase設定が不足しています。.env.local を確認してください。"
+    );
   }
 
   return {
@@ -189,7 +200,9 @@ export async function findTopSiteHistories(
   userId?: string
 ) {
   if (scope === "mine" && !userId) {
-    throw new Error("自分の高スコアサイト取得にはログインユーザーIDが必要です。");
+    throw new Error(
+      "自分の高スコアサイト取得にはログインユーザーIDが必要です。"
+    );
   }
 
   const query = new URLSearchParams({
@@ -280,7 +293,7 @@ export async function assertDiagnosisUsageAvailable(userId: string) {
 
   if (usage.remainingThisMonth <= 0) {
     throw new Error(
-      `今月の診断回数上限（${usage.monthlyLimit}回）に達しました。来月になると再び診断できます。`
+      `今月の診断回数上限（${usage.monthlyLimit}回）に達しました。来月になると再度診断できます。`
     );
   }
 
@@ -331,15 +344,33 @@ export async function requireAdminRole(userId: string) {
   return role;
 }
 
-export async function resetCurrentMonthUsage(targetUserId?: string) {
+export async function findAdminUsers(): Promise<AdminUserItem[]> {
   const query = new URLSearchParams({
+    select: PROFILE_SELECT,
+    order: "created_at.desc",
+    limit: "100"
+  });
+  const rows = await requestSupabase<SupabaseProfileRow[]>(
+    `/profiles?${query.toString()}`
+  );
+
+  return Promise.all(
+    rows.map(async (row) => ({
+      userId: row.user_id,
+      email: row.email,
+      role: row.role,
+      createdAt: row.created_at,
+      usage: await getDiagnosisUsageSummary(row.user_id)
+    }))
+  );
+}
+
+export async function resetCurrentMonthUsage(targetUserId: string) {
+  const query = new URLSearchParams({
+    user_id: `eq.${targetUserId}`,
     action: "eq.diagnosis",
     created_at: `gte.${getCurrentMonthStart()}`
   });
-
-  if (targetUserId) {
-    query.set("user_id", `eq.${targetUserId}`);
-  }
 
   await requestSupabase<[]>(`/usage_events?${query.toString()}`, {
     method: "DELETE",

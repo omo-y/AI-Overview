@@ -17,7 +17,7 @@ URLまたは本文を入力すると、AI OverviewやAI検索で引用されや�
 - 月間診断回数制限
 - URL診断のSSRF対策
 - パスワードリセット
-- 管理者用の今月分診断回数リセット
+- 管理者用ユーザー一覧と対象ユーザー別の今月分診断回数リセット
 
 ## 必要なもの
 
@@ -119,17 +119,25 @@ MONTHLY_DIAGNOSIS_LIMIT=10
 
 ## 管理者の設定
 
-管理者にしたいユーザーのIDを Supabase の `auth.users` で確認し、SQL Editorで以下を実行します。
+管理者にしたいユーザーのIDとメールアドレスを Supabase の `auth.users` で確認し、SQL Editorで以下を実行します。
 
 ```sql
-insert into profiles (user_id, role)
-values ('ここにユーザーID', 'admin')
-on conflict (user_id) do update set role = 'admin';
+insert into profiles (user_id, email, role)
+values ('ここにユーザーID', 'user@example.com', 'admin')
+on conflict (user_id) do update set email = excluded.email, role = 'admin';
 ```
 
-管理者としてログインすると、画面上の「今月の診断回数」に **自分の今月分をリセット** ボタンが表示されます。
+管理対象にしたい一般ユーザーも `profiles` に登録します。
 
-このボタンは、ログイン中の管理者本人の今月分 `usage_events` だけを削除します。診断履歴は削除されません。
+```sql
+insert into profiles (user_id, email, role)
+values ('ここにユーザーID', 'user@example.com', 'user')
+on conflict (user_id) do update set email = excluded.email, role = excluded.role;
+```
+
+管理者としてログインすると、管理者パネルに登録ユーザー一覧、今月の診断回数、リセットボタンが表示されます。
+
+リセットボタンは、対象ユーザーの今月分 `usage_events` だけを削除します。診断履歴は削除されません。
 
 ## URL診断のSSRF対策
 
@@ -159,9 +167,13 @@ URL診断では以下をブロックします。
 
 `usage_events` テーブルが作成されていない可能性があります。SQL Editorで `supabase/schema.sql` を実行してください。
 
-### リセットボタンが表示されない
+### 管理者パネルが表示されない
 
 `profiles` テーブルにログイン中ユーザーの `role = admin` が設定されているか確認してください。
+
+### 管理者パネルにユーザーが表示されない
+
+管理対象ユーザーが `profiles` テーブルに登録されているか確認してください。
 
 ### Ollamaに接続できない
 
@@ -201,6 +213,8 @@ app/
       route.ts
     admin/
       me/
+        route.ts
+      users/
         route.ts
       usage/
         reset/

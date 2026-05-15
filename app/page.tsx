@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
@@ -73,6 +73,19 @@ type AdminStatusResponse = {
 
 type AdminResetResponse = {
   message?: string;
+  error?: string;
+};
+
+type AdminUserItem = {
+  userId: string;
+  email: string | null;
+  role: "user" | "admin";
+  createdAt: string;
+  usage: UsageSummary;
+};
+
+type AdminUsersResponse = {
+  users: AdminUserItem[];
   error?: string;
 };
 
@@ -205,15 +218,16 @@ function ScoreTable({ scores }: { scores: RuleScore[] }) {
                 <td className="px-4 py-4 font-medium text-ink">{score.item}</td>
                 <td className="px-4 py-4">
                   <div className="flex items-center gap-3">
-                    <span className={`w-10 font-bold ${getScoreTone(percentage)}`}>
+                    <span className={["w-10 font-bold", getScoreTone(percentage)].join(" ")}>
                       {score.score}/10
                     </span>
                     <div className="h-2 w-20 rounded-full bg-slate-100">
                       <div
-                        className={`h-2 rounded-full ${getScoreBackground(
-                          percentage
-                        )}`}
-                        style={{ width: `${percentage}%` }}
+                        className={[
+                          "h-2 rounded-full",
+                          getScoreBackground(percentage)
+                        ].join(" ")}
+                        style={{ width: percentage + "%" }}
                       />
                     </div>
                   </div>
@@ -257,7 +271,9 @@ export default function Home() {
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [usageNotice, setUsageNotice] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<AdminUserItem[]>([]);
   const [adminMessage, setAdminMessage] = useState("");
+  const [resettingUserId, setResettingUserId] = useState("");
   const [isResettingUsage, setIsResettingUsage] = useState(false);
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -283,7 +299,9 @@ export default function Home() {
     setUsage(null);
     setUsageNotice("");
     setIsAdmin(false);
+    setAdminUsers([]);
     setAdminMessage("");
+    setResettingUserId("");
     setResult(null);
   }, []);
 
@@ -299,7 +317,7 @@ export default function Home() {
       if (!supabaseUrl || !anonKey) {
         clearSession();
         setAuthError(
-          "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
+          "Supabase Auth設定が不足しています。.env.local を確認してください。"
         );
         return;
       }
@@ -369,7 +387,7 @@ export default function Home() {
 
     if (!supabaseUrl || !anonKey) {
       setAuthError(
-        "Supabase Auth設定が不足しています。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。"
+        "Supabase Auth設定が不足しています。.env.local を確認してください。"
       );
       return;
     }
@@ -500,7 +518,7 @@ export default function Home() {
         setAuthError(
           data.error_description ??
             data.msg ??
-            "ログインまたはアカウント作成に失敗しました。Supabase Auth設定を確認してください。"
+            "ログインまたはアカウント作成に失敗しました。"
         );
         return;
       }
@@ -575,6 +593,34 @@ export default function Home() {
     }
   }, [authHeaders]);
 
+  const loadAdminUsers = useCallback(async () => {
+    if (!authHeaders || !isAdmin) {
+      setAdminUsers([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "GET",
+        headers: authHeaders,
+        cache: "no-store"
+      });
+      const data = (await response.json()) as AdminUsersResponse;
+
+      if (!response.ok) {
+        setAdminMessage(
+          data.error ?? "管理者用ユーザー一覧の取得に失敗しました。"
+        );
+        return;
+      }
+
+      setAdminUsers(data.users);
+    } catch (adminUsersError) {
+      console.error("[Admin users load failed]", adminUsersError);
+      setAdminMessage("管理者用ユーザー一覧の取得に失敗しました。");
+    }
+  }, [authHeaders, isAdmin]);
+
   const loadHistory = useCallback(async () => {
     if (!authHeaders) {
       return;
@@ -590,7 +636,8 @@ export default function Home() {
 
       if (!response.ok) {
         setHistoryError(
-          data.error ?? "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+          data.error ??
+            "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
         );
         return;
       }
@@ -599,7 +646,9 @@ export default function Home() {
       setHistoryError("");
     } catch (loadError) {
       console.error("[History load failed]", loadError);
-      setHistoryError("診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。");
+      setHistoryError(
+        "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+      );
     }
   }, [authHeaders]);
 
@@ -618,7 +667,8 @@ export default function Home() {
 
       if (!response.ok) {
         setHistoryError(
-          data.error ?? "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+          data.error ??
+            "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
         );
         return;
       }
@@ -627,7 +677,9 @@ export default function Home() {
       setHistoryError("");
     } catch (loadError) {
       console.error("[Top sites load failed]", loadError);
-      setHistoryError("高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。");
+      setHistoryError(
+        "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+      );
     }
   }, [authHeaders, topSitesScope]);
 
@@ -651,6 +703,18 @@ export default function Home() {
 
     return () => window.clearTimeout(timerId);
   }, [refreshHistoryViews, session]);
+
+  useEffect(() => {
+    if (!session || !isAdmin) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      void loadAdminUsers();
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [isAdmin, loadAdminUsers, session]);
 
   async function saveHistoryItem(analysisResult: AnalysisResult) {
     if (!authHeaders) {
@@ -695,18 +759,23 @@ export default function Home() {
     }
   }
 
-  async function handleResetMyMonthlyUsage() {
+  async function handleResetUserMonthlyUsage(userId: string) {
     if (!authHeaders || !isAdmin) {
       return;
     }
 
     setIsResettingUsage(true);
+    setResettingUserId(userId);
     setAdminMessage("");
 
     try {
       const response = await fetch("/api/admin/usage/reset", {
         method: "POST",
-        headers: authHeaders
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        body: JSON.stringify({ userId })
       });
       const data = (await response.json()) as AdminResetResponse;
 
@@ -715,16 +784,17 @@ export default function Home() {
         return;
       }
 
-      setAdminMessage(data.message ?? "今月の診断回数をリセットしました。");
+      setAdminMessage(data.message ?? "対象ユーザーの今月分をリセットしました。");
       await loadUsage();
+      await loadAdminUsers();
     } catch (resetError) {
       console.error("[Usage reset failed]", resetError);
       setAdminMessage("診断回数のリセットに失敗しました。");
     } finally {
       setIsResettingUsage(false);
+      setResettingUserId("");
     }
   }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -779,7 +849,9 @@ export default function Home() {
       setResult(analysisResult);
       await saveHistoryItem(analysisResult);
     } catch {
-      setError("通信エラーが発生しました。開発サーバーの状態を確認してください。");
+      setError(
+        "通信エラーが発生しました。開発サーバーの状態を確認してください。"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -794,21 +866,19 @@ export default function Home() {
               Local LLM + Rule Based
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-normal text-ink sm:text-3xl">
-              AI Overview診断ツール
+              AI Overview險ｺ譁ｭ繝・・繝ｫ
             </h1>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <span className="rounded-full border border-line bg-slate-50 px-4 py-2 text-sm text-muted">
-              OpenAI APIなし / Supabase Postgres / ログイン必須
-            </span>
+              OpenAI API縺ｪ縺・/ Supabase Postgres / 繝ｭ繧ｰ繧､繝ｳ蠢・・            </span>
             {session ? (
               <button
                 type="button"
                 onClick={clearSession}
                 className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
               >
-                ログアウト
-              </button>
+                繝ｭ繧ｰ繧｢繧ｦ繝・              </button>
             ) : null}
           </div>
         </div>
@@ -819,14 +889,13 @@ export default function Home() {
           <section className="mx-auto max-w-xl rounded-lg border border-line bg-white p-6 shadow-sm">
             <h2 className="text-xl font-bold text-ink">{getAuthTitle(authMode)}</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              診断実行と履歴保存はログイン必須です。履歴はユーザーごとに分離されます。
-            </p>
+              險ｺ譁ｭ螳溯｡後→螻･豁ｴ菫晏ｭ倥・繝ｭ繧ｰ繧､繝ｳ蠢・医〒縺吶ょｱ･豁ｴ縺ｯ繝ｦ繝ｼ繧ｶ繝ｼ縺斐→縺ｫ蛻・屬縺輔ｌ縺ｾ縺吶・            </p>
 
             <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
               {authMode !== "updatePassword" ? (
                 <div>
                   <label htmlFor="email" className="text-sm font-semibold text-ink">
-                    メールアドレス
+                    繝｡繝ｼ繝ｫ繧｢繝峨Ξ繧ｹ
                   </label>
                   <input
                     id="email"
@@ -845,8 +914,7 @@ export default function Home() {
                     htmlFor="password"
                     className="text-sm font-semibold text-ink"
                   >
-                    パスワード
-                  </label>
+                    繝代せ繝ｯ繝ｼ繝・                  </label>
                   <input
                     id="password"
                     type="password"
@@ -866,8 +934,7 @@ export default function Home() {
                     htmlFor="new-password"
                     className="text-sm font-semibold text-ink"
                   >
-                    新しいパスワード
-                  </label>
+                    譁ｰ縺励＞繝代せ繝ｯ繝ｼ繝・                  </label>
                   <input
                     id="new-password"
                     type="password"
@@ -917,7 +984,9 @@ export default function Home() {
                 }}
                 className="font-semibold text-accent underline"
               >
-                {authMode === "signIn" ? "アカウントを作成する" : "ログイン画面に戻る"}
+                {authMode === "signIn"
+                  ? "アカウントを作成する"
+                  : "ログイン画面に戻る"}
               </button>
               {authMode !== "updatePassword" ? (
                 <button
@@ -957,33 +1026,15 @@ export default function Home() {
                     {usageNotice}
                   </p>
                 ) : null}
-                {isAdmin ? (
-                  <div className="mt-3 border-t border-line pt-3">
-                    <button
-                      type="button"
-                      onClick={handleResetMyMonthlyUsage}
-                      disabled={isResettingUsage}
-                      className="rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-ink transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isResettingUsage ? "リセット中..." : "自分の今月分をリセット"}
-                    </button>
-                    {adminMessage ? (
-                      <p className="mt-2 text-xs leading-5 text-muted">
-                        {adminMessage}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
               <section className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start">
                 <div className="mb-5">
-                  <h2 className="text-lg font-bold text-ink">診断対象</h2>
+                  <h2 className="text-lg font-bold text-ink">險ｺ譁ｭ蟇ｾ雎｡</h2>
                   <p className="mt-2 text-sm leading-6 text-muted">
-                    URLまたは記事本文から、AI検索に引用されやすい構造かを診断します。
-                  </p>
+                    URL縺ｾ縺溘・險倅ｺ区悽譁・°繧峨、I讀懃ｴ｢縺ｫ蠑慕畑縺輔ｌ繧・☆縺・ｧ矩縺九ｒ險ｺ譁ｭ縺励∪縺吶・                  </p>
                 </div>
 
                 <form onSubmit={handleSubmit}>
@@ -998,7 +1049,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      URLで診断
+                      URL縺ｧ險ｺ譁ｭ
                     </button>
                     <button
                       type="button"
@@ -1010,7 +1061,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      本文で診断
+                      譛ｬ譁・〒險ｺ譁ｭ
                     </button>
                   </div>
 
@@ -1020,7 +1071,7 @@ export default function Home() {
                         htmlFor="target-url"
                         className="text-sm font-semibold text-ink"
                       >
-                        診断対象ページURL
+                        險ｺ譁ｭ蟇ｾ雎｡繝壹・繧ｸURL
                       </label>
                       <input
                         id="target-url"
@@ -1111,8 +1162,7 @@ export default function Home() {
 
                 {!result && !error ? (
                   <div className="rounded-lg border border-dashed border-line bg-white p-8 text-center text-sm text-muted">
-                    診断を開始すると、ここに結果カードが表示されます。
-                  </div>
+                    險ｺ譁ｭ繧帝幕蟋九☆繧九→縲√％縺薙↓邨先棡繧ｫ繝ｼ繝峨′陦ｨ遉ｺ縺輔ｌ縺ｾ縺吶・                  </div>
                 ) : null}
 
                 {result ? (
@@ -1128,7 +1178,7 @@ export default function Home() {
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <p className="text-sm font-semibold text-muted">
-                              総合スコア
+                              邱丞粋繧ｹ繧ｳ繧｢
                             </p>
                             <p
                               className={`mt-3 text-7xl font-bold leading-none ${getScoreTone(
@@ -1150,19 +1200,18 @@ export default function Home() {
                             style={{ width: `${result.totalScore}%` }}
                           />
                         </div>
-                        <p className="mt-3 text-sm text-muted">100点満点</p>
+                        <p className="mt-3 text-sm text-muted">100轤ｹ貅轤ｹ</p>
                       </div>
 
                       <div className="rounded-lg border border-line bg-white p-6 shadow-sm">
                         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <h3 className="text-lg font-bold text-ink">
-                            評価サマリー
+                            隧穂ｾ｡繧ｵ繝槭Μ繝ｼ
                           </h3>
                           <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
-                            {result.sourceType === "url" ? "URL診断" : "本文診断"} /{" "}
+                            {result.sourceType === "url" ? "URL險ｺ譁ｭ" : "譛ｬ譁・ｨｺ譁ｭ"} /{" "}
                             {result.analyzedTextLength.toLocaleString("ja-JP")}
-                            文字
-                          </span>
+                            譁・ｭ・                          </span>
                         </div>
                         <p className="leading-7 text-muted">{result.summary}</p>
                         {result.sourceUrl ? (
@@ -1181,16 +1230,16 @@ export default function Home() {
                     <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
                       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <h3 className="text-lg font-bold text-ink">
-                          項目別スコア
+                          鬆・岼蛻･繧ｹ繧ｳ繧｢
                         </h3>
-                        <span className="text-sm text-muted">0〜10点で評価</span>
+                        <span className="text-sm text-muted">0縲・0轤ｹ縺ｧ隧穂ｾ｡</span>
                       </div>
                       <ScoreTable scores={result.ruleScores} />
                     </div>
 
                     <div className="grid gap-6 xl:grid-cols-2">
                       <div>
-                        <h3 className="text-lg font-bold text-ink">改善すべき点</h3>
+                        <h3 className="text-lg font-bold text-ink">謾ｹ蝟・☆縺ｹ縺咲せ</h3>
                         <div className="mt-4 space-y-3">
                           {result.problems.map((problem, index) => (
                             <div
@@ -1198,7 +1247,7 @@ export default function Home() {
                               className="rounded-lg border border-rose-100 bg-rose-50 p-4"
                             >
                               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-rose-700">
-                                課題 {index + 1}
+                                隱ｲ鬘・{index + 1}
                               </span>
                               <p className="mt-2 text-sm leading-6 text-rose-950">
                                 {problem}
@@ -1285,10 +1334,9 @@ export default function Home() {
             <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
               <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-ink">診断データ</h2>
+                  <h2 className="text-lg font-bold text-ink">險ｺ譁ｭ繝・・繧ｿ</h2>
                   <p className="mt-1 text-sm text-muted">
-                    自分の履歴と高スコアサイトを確認できます。全体ランキングは公開許可されたURLのみ表示します。
-                  </p>
+                    閾ｪ蛻・・螻･豁ｴ縺ｨ鬮倥せ繧ｳ繧｢繧ｵ繧､繝医ｒ遒ｺ隱阪〒縺阪∪縺吶ょ・菴薙Λ繝ｳ繧ｭ繝ｳ繧ｰ縺ｯ蜈ｬ髢玖ｨｱ蜿ｯ縺輔ｌ縺欟RL縺ｮ縺ｿ陦ｨ遉ｺ縺励∪縺吶・                  </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="grid grid-cols-2 rounded-md border border-line bg-slate-50 p-1">
@@ -1301,7 +1349,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      診断履歴
+                      險ｺ譁ｭ螻･豁ｴ
                     </button>
                     <button
                       type="button"
@@ -1312,7 +1360,7 @@ export default function Home() {
                           : "text-muted hover:text-ink"
                       }`}
                     >
-                      高スコアサイト5選
+                      鬮倥せ繧ｳ繧｢繧ｵ繧､繝・驕ｸ
                     </button>
                   </div>
                   <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
@@ -1332,8 +1380,7 @@ export default function Home() {
                         : "text-muted hover:text-ink"
                     }`}
                   >
-                    自分だけ
-                  </button>
+                    閾ｪ蛻・□縺・                  </button>
                   <button
                     type="button"
                     onClick={() => setTopSitesScope("public")}
@@ -1498,9 +1545,108 @@ export default function Home() {
                 </div>
               ) : null}
             </section>
+
+            {isAdmin ? (
+              <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-ink">管理者パネル</h2>
+                    <p className="mt-1 text-sm text-muted">
+                      登録ユーザーの今月の診断回数を確認し、対象ユーザーだけリセットできます。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadAdminUsers}
+                    className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-slate-50"
+                  >
+                    再読み込み
+                  </button>
+                </div>
+
+                {adminMessage ? (
+                  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    {adminMessage}
+                  </div>
+                ) : null}
+
+                {adminUsers.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-line bg-slate-50 p-6 text-center text-sm text-muted">
+                    管理対象ユーザーがまだありません。
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-line bg-slate-50 text-xs uppercase tracking-normal text-muted">
+                          <th className="px-4 py-3 font-semibold">ユーザー</th>
+                          <th className="px-4 py-3 font-semibold">権限</th>
+                          <th className="px-4 py-3 text-right font-semibold">
+                            今月の診断回数
+                          </th>
+                          <th className="px-4 py-3 font-semibold">登録日時</th>
+                          <th className="px-4 py-3 text-right font-semibold">
+                            操作
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminUsers.map((adminUser) => (
+                          <tr
+                            key={adminUser.userId}
+                            className="border-b border-line last:border-0"
+                          >
+                            <td className="px-4 py-4">
+                              <p className="font-semibold text-ink">
+                                {adminUser.email ?? "メール未登録"}
+                              </p>
+                              <p className="mt-1 break-all text-xs text-muted">
+                                {adminUser.userId}
+                              </p>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted">
+                                {adminUser.role}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-right font-semibold text-ink">
+                              {adminUser.usage.isAvailable
+                                ? `${adminUser.usage.usedThisMonth} / ${adminUser.usage.monthlyLimit}回`
+                                : "制限未設定"}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 text-muted">
+                              {formatAnalyzedAt(adminUser.createdAt)}
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleResetUserMonthlyUsage(adminUser.userId)
+                                }
+                                disabled={
+                                  isResettingUsage &&
+                                  resettingUserId === adminUser.userId
+                                }
+                                className="rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-ink transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isResettingUsage &&
+                                resettingUserId === adminUser.userId
+                                  ? "リセット中..."
+                                  : "今月分をリセット"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
           </>
         )}
       </div>
     </main>
   );
 }
+

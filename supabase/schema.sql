@@ -1,8 +1,12 @@
 create table if not exists profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
+  email text,
   role text not null default 'user' check (role in ('user', 'admin')),
   created_at timestamptz not null default now()
 );
+
+alter table profiles
+  add column if not exists email text;
 
 comment on table profiles is
   'ユーザーごとの権限を管理する。role = admin のユーザーだけ管理機能を使える。';
@@ -113,10 +117,15 @@ create policy "Users can insert own usage events"
   to authenticated
   with check (auth.uid() = user_id);
 
--- 管理者にしたいユーザーは、auth.users の id を確認して以下を実行してください。
+-- 管理者にしたいユーザーは、auth.users の id と email を確認して以下を実行してください。
 -- insert into profiles (user_id, role)
 -- values ('ここにユーザーID', 'admin')
 -- on conflict (user_id) do update set role = 'admin';
+--
+-- ユーザー一覧でメールアドレスも表示したい場合:
+-- insert into profiles (user_id, email, role)
+-- values ('ここにユーザーID', 'user@example.com', 'admin')
+-- on conflict (user_id) do update set email = excluded.email, role = 'admin';
 
 -- 注意:
 -- このアプリはNext.js API Route経由で全体ランキングを取得し、
