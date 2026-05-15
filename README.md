@@ -127,15 +127,9 @@ values ('ここにユーザーID', 'user@example.com', 'admin')
 on conflict (user_id) do update set email = excluded.email, role = 'admin';
 ```
 
-管理対象にしたい一般ユーザーも `profiles` に登録します。
+一般ユーザーは Supabase Authentication に登録されていれば管理者パネルに表示されます。`profiles` は権限管理用なので、管理者にしたいユーザーだけ `role = admin` を設定します。
 
-```sql
-insert into profiles (user_id, email, role)
-values ('ここにユーザーID', 'user@example.com', 'user')
-on conflict (user_id) do update set email = excluded.email, role = excluded.role;
-```
-
-管理者としてログインすると、管理者パネルに登録ユーザー一覧、今月の診断回数、リセットボタンが表示されます。
+管理者としてログインすると、管理者パネルに Auth 登録ユーザー一覧、今月の診断回数、リセットボタンが表示されます。
 
 リセットボタンは、対象ユーザーの今月分 `usage_events` だけを削除します。診断履歴は削除されません。
 
@@ -173,7 +167,7 @@ URL診断では以下をブロックします。
 
 ### 管理者パネルにユーザーが表示されない
 
-管理対象ユーザーが `profiles` テーブルに登録されているか確認してください。
+`SUPABASE_SERVICE_ROLE_KEY` が正しく設定されているか確認してください。管理者パネルのユーザー一覧は Supabase Auth Admin API から取得します。
 
 ### Ollamaに接続できない
 

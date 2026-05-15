@@ -615,11 +615,19 @@ export default function Home() {
       }
 
       setAdminUsers(data.users);
+      const currentUser = data.users.find(
+        (adminUser) => adminUser.userId === session?.user.id
+      );
+
+      if (currentUser) {
+        setUsage(currentUser.usage);
+        setUsageNotice(currentUser.usage.message ?? "");
+      }
     } catch (adminUsersError) {
       console.error("[Admin users load failed]", adminUsersError);
       setAdminMessage("管理者用ユーザー一覧の取得に失敗しました。");
     }
-  }, [authHeaders, isAdmin]);
+  }, [authHeaders, isAdmin, session?.user.id]);
 
   const loadHistory = useCallback(async () => {
     if (!authHeaders) {
@@ -751,6 +759,9 @@ export default function Home() {
 
       setHistoryError("");
       await refreshHistoryViews();
+      if (isAdmin) {
+        await loadAdminUsers();
+      }
     } catch (saveError) {
       console.error("[History save failed]", saveError);
       setHistoryError(
@@ -1608,15 +1619,15 @@ export default function Home() {
                           >
                             <td className="px-4 py-4">
                               <p className="font-semibold text-ink">
-                                {adminUser.email ?? "メール未登録"}
+                                {adminUser.email ?? "メール取得不可"}
                               </p>
                               <p className="mt-1 break-all text-xs text-muted">
-                                {adminUser.userId}
+                                ID: {adminUser.userId.slice(0, 8)}...
                               </p>
                             </td>
                             <td className="px-4 py-4">
                               <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted">
-                                {adminUser.role}
+                                {adminUser.role === "admin" ? "管理者" : "一般"}
                               </span>
                             </td>
                             <td className="px-4 py-4 text-right font-semibold text-ink">

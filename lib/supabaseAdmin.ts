@@ -23,6 +23,16 @@ type SupabaseProfileRow = {
   created_at: string;
 };
 
+type SupabaseAuthUser = {
+  id: string;
+  email?: string | null;
+  created_at?: string | null;
+};
+
+type SupabaseAuthUsersResponse = {
+  users?: SupabaseAuthUser[];
+};
+
 export type HistoryResponseItem = {
   id: number;
   createdAt: string;
@@ -149,6 +159,27 @@ async function requestSupabase<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return (await response.json()) as T;
+}
+
+async function requestSupabaseAuthUsers() {
+  const { url, serviceRoleKey } = getSupabaseConfig();
+  const response = await fetch(`${url}/auth/v1/admin/users?page=1&per_page=1000`, {
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`
+    },
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(
+      `Supabase Auth API error: HTTP ${response.status}${message ? ` ${message}` : ""}`
+    );
+  }
+
+  const data = (await response.json()) as SupabaseAuthUsersResponse;
+  return data.users ?? [];
 }
 
 export async function findRecentHistoriesByUser(
@@ -345,23 +376,32 @@ export async function requireAdminRole(userId: string) {
 }
 
 export async function findAdminUsers(): Promise<AdminUserItem[]> {
-  const query = new URLSearchParams({
-    select: PROFILE_SELECT,
-    order: "created_at.desc",
-    limit: "100"
-  });
-  const rows = await requestSupabase<SupabaseProfileRow[]>(
-    `/profiles?${query.toString()}`
+  const [authUsers, profiles] = await Promise.all([
+    requestSupabaseAuthUsers(),
+    requestSupabase<SupabaseProfileRow[]>(
+      `/profiles?${new URLSearchParams({
+        select: PROFILE_SELECT,
+        limit: "1000"
+      }).toString()}`
+    )
+  ]);
+  const profilesByUserId = new Map(
+    profiles.map((profile) => [profile.user_id, profile])
   );
 
   return Promise.all(
-    rows.map(async (row) => ({
-      userId: row.user_id,
-      email: row.email,
-      role: row.role,
-      createdAt: row.created_at,
-      usage: await getDiagnosisUsageSummary(row.user_id)
-    }))
+    authUsers.map(async (authUser) => {
+      const profile = profilesByUserId.get(authUser.id);
+
+      return {
+        userId: authUser.id,
+        email: profile?.email ?? authUser.email ?? null,
+        role: profile?.role ?? "user",
+        createdAt:
+          profile?.created_at ?? authUser.created_at ?? new Date(0).toISOString(),
+        usage: await getDiagnosisUsageSummary(authUser.id)
+      };
+    })
   );
 }
 
