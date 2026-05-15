@@ -1131,8 +1131,36 @@ export default function Home() {
               </div>
             </div>
 
+            <nav
+              aria-label="ページ内メニュー"
+              className="mb-5 rounded-lg border border-line bg-white p-3 shadow-sm"
+            >
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { href: "#diagnosis-input", label: "診断対象" },
+                  { href: "#diagnosis-result", label: "診断結果" },
+                  { href: "#aio-research", label: "実測チェック" },
+                  { href: "#diagnosis-data", label: "診断データ" },
+                  ...(isAdmin
+                    ? [{ href: "#admin-panel", label: "管理者パネル" }]
+                    : [])
+                ].map((item) => (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    className="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm font-semibold text-muted transition hover:bg-white hover:text-accent"
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            </nav>
+
             <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
-              <section className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start">
+              <section
+                id="diagnosis-input"
+                className="scroll-mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-6 xl:self-start"
+              >
                 <div className="mb-5">
                   <h2 className="text-lg font-bold text-ink">診断対象</h2>
                   <p className="mt-2 text-sm leading-6 text-muted">
@@ -1249,7 +1277,7 @@ export default function Home() {
                 </form>
               </section>
 
-              <section className="space-y-6">
+              <section id="diagnosis-result" className="scroll-mt-6 space-y-6">
                 <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
                   <h2 className="text-lg font-bold text-ink">診断結果</h2>
                   <p className="mt-2 text-sm leading-6 text-muted">
@@ -1342,7 +1370,10 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                    <div
+                      id="aio-research"
+                      className="scroll-mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6"
+                    >
                       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <h3 className="text-lg font-bold text-ink">
@@ -1680,7 +1711,10 @@ export default function Home() {
               </section>
             </div>
 
-            <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+            <section
+              id="diagnosis-data"
+              className="mt-6 scroll-mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6"
+            >
               <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-ink">診断データ</h2>
@@ -1898,7 +1932,10 @@ export default function Home() {
             </section>
 
             {isAdmin ? (
-              <section className="mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+              <section
+                id="admin-panel"
+                className="mt-6 scroll-mt-6 rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6"
+              >
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-lg font-bold text-ink">管理者パネル</h2>
