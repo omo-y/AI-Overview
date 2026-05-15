@@ -278,8 +278,20 @@ export default function Home() {
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const characterCount = useMemo(() => text.trim().length, [text]);
+
+  useEffect(() => {
+    function handleScroll() {
+      setShowBackToTop(window.scrollY > 600);
+    }
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const authHeaders = useMemo(() => {
     if (!session) {
@@ -806,6 +818,14 @@ export default function Home() {
       setResettingUserId("");
     }
   }
+
+  function handleBackToTop() {
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth"
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -1259,6 +1279,75 @@ export default function Home() {
                     <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
                       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <h3 className="text-lg font-bold text-ink">
+                          精度向上指標
+                        </h3>
+                        <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-muted">
+                          {result.diagnosticInsights.searchIntentLabel}
+                        </span>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        {[
+                          {
+                            label: "回答可能性",
+                            score: result.diagnosticInsights.answerabilityScore,
+                            description: "AIが短い回答を作りやすい構造か"
+                          },
+                          {
+                            label: "根拠の質",
+                            score: result.diagnosticInsights.evidenceQualityScore,
+                            description: "公式情報、数値、年次、出典が明確か"
+                          },
+                          {
+                            label: "想定質問カバー率",
+                            score: result.diagnosticInsights.queryCoverageScore,
+                            description: "関連質問や周辺トピックを拾えているか"
+                          }
+                        ].map((item) => (
+                          <div
+                            key={item.label}
+                            className="rounded-lg border border-line bg-slate-50 p-4"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="font-semibold text-ink">{item.label}</p>
+                              <span className={`text-lg font-bold ${getScoreTone(item.score * 10)}`}>
+                                {item.score}/10
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs leading-5 text-muted">
+                              {item.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_260px]">
+                        <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-muted">
+                          {result.diagnosticInsights.comments.map((comment) => (
+                            <li key={comment}>{comment}</li>
+                          ))}
+                        </ul>
+                        <div className="rounded-lg border border-line p-4">
+                          <p className="text-sm font-semibold text-ink">
+                            推奨構造化データ候補
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {result.diagnosticInsights.schemaSuggestions.map(
+                              (schema) => (
+                                <span
+                                  key={schema}
+                                  className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-muted"
+                                >
+                                  {schema}
+                                </span>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-line bg-white p-5 shadow-sm sm:p-6">
+                      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <h3 className="text-lg font-bold text-ink">
                           項目別スコア
                         </h3>
                         <span className="text-sm text-muted">0〜10点で評価</span>
@@ -1677,6 +1766,16 @@ export default function Home() {
           </>
         )}
       </div>
+      {showBackToTop ? (
+        <button
+          type="button"
+          onClick={handleBackToTop}
+          className="fixed bottom-5 right-5 z-50 rounded-full border border-line bg-white px-4 py-3 text-sm font-bold text-accent shadow-lg transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-200 sm:bottom-6 sm:right-6"
+          aria-label="ページ上部へ戻る"
+        >
+          TOPへ戻る
+        </button>
+      ) : null}
     </main>
   );
 }

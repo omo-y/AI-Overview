@@ -1,16 +1,13 @@
-import type { RuleScore } from "@/types/analysis";
-import {
-  scoreAiOverviewOfficialGuidance,
-  scoreAlternativesAndExceptions,
-  scoreHowToStructure,
-  scoreIntroKeyPointsAndEvidence,
-  scoreOriginalityAndPrimaryValue,
-  scoreSeoAioBalance
-} from "@/lib/aiOverviewKnowledge";
+import type {
+  DiagnosticInsight,
+  RuleScore,
+  SearchIntentType
+} from "@/types/analysis";
 
 type RuleAnalysis = {
   totalScore: number;
   ruleScores: RuleScore[];
+  diagnosticInsights: DiagnosticInsight;
 };
 
 const questionHeadingKeywords = [
@@ -22,10 +19,25 @@ const questionHeadingKeywords = [
   "どこ",
   "いくら",
   "できますか",
-  "必要か"
+  "必要か",
+  "選び方",
+  "違い",
+  "比較",
+  "料金",
+  "費用"
 ];
 
-const conclusionKeywords = ["結論", "つまり", "要するに", "です", "できます"];
+const conclusionKeywords = [
+  "結論",
+  "つまり",
+  "要するに",
+  "できます",
+  "です",
+  "おすすめ",
+  "重要",
+  "最適"
+];
+
 const evidenceKeywords = [
   "公式",
   "出典",
@@ -35,8 +47,23 @@ const evidenceKeywords = [
   "調査",
   "統計",
   "資料",
-  "リンク"
+  "リンク",
+  "根拠",
+  "公表",
+  "2024",
+  "2025",
+  "2026"
 ];
+
+const strongEvidencePatterns = [
+  /https?:\/\//i,
+  /go\.jp|lg\.jp|or\.jp|ac\.jp/i,
+  /google\.com|developers\.google\.com|support\.google\.com/i,
+  /pdf/i,
+  /[0-9]{4}年/,
+  /[0-9]+(?:\.[0-9]+)?%/
+];
+
 const eeatKeywords = [
   "実績",
   "事例",
@@ -45,9 +72,19 @@ const eeatKeywords = [
   "運営者",
   "専門",
   "対応実績",
-  "導入事例"
+  "導入事例",
+  "資格",
+  "専門家",
+  "レビュー",
+  "口コミ"
 ];
-const faqKeywords = ["FAQ", "よくある質問", "Q.", "Q：", "質問"];
+
+const faqKeywords = ["FAQ", "よくある質問", "Q.", "Q：", "質問", "Q&A"];
+const comparisonKeywords = ["比較", "違い", "メリット", "デメリット", "選び方"];
+const priceKeywords = ["料金", "費用", "価格", "相場", "いくら"];
+const howToKeywords = ["方法", "手順", "流れ", "やり方", "ステップ", "使い方"];
+const localKeywords = ["東京", "大阪", "神奈川", "埼玉", "千葉", "地域", "エリア", "市", "区"];
+const troubleshootingKeywords = ["原因", "対処", "解決", "できない", "エラー", "故障", "トラブル"];
 
 function clampScore(score: number): number {
   return Math.max(0, Math.min(10, Math.round(score)));
@@ -57,15 +94,74 @@ function hasAnyKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+function countKeywordMatches(text: string, keywords: string[]): number {
+  return keywords.filter((keyword) => text.includes(keyword)).length;
+}
+
 function extractHeadings(text: string): string[] {
   const markdownHeadings =
     text.match(/^#{1,3}\s+.+$/gm)?.map((heading) => heading.trim()) ?? [];
   const htmlHeadings =
     text
-      .match(/<h[23][^>]*>[\s\S]*?<\/h[23]>/gi)
+      .match(/<h[1-3][^>]*>[\s\S]*?<\/h[1-3]>/gi)
       ?.map((heading) => heading.replace(/<[^>]+>/g, "").trim()) ?? [];
 
   return [...markdownHeadings, ...htmlHeadings].filter(Boolean);
+}
+
+function getParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}|(?<=。)\s+/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length >= 40);
+}
+
+function detectSearchIntent(text: string, headings: string[]): SearchIntentType {
+  const joinedHeadings = headings.join("\n");
+  const target = `${joinedHeadings}\n${text.slice(0, 1500)}`;
+  const candidates: Array<{ type: SearchIntentType; score: number }> = [
+    {
+      type: "howTo",
+      score: countKeywordMatches(target, howToKeywords)
+    },
+    {
+      type: "comparison",
+      score: countKeywordMatches(target, comparisonKeywords)
+    },
+    {
+      type: "price",
+      score: countKeywordMatches(target, priceKeywords)
+    },
+    {
+      type: "local",
+      score: countKeywordMatches(target, localKeywords)
+    },
+    {
+      type: "troubleshooting",
+      score: countKeywordMatches(target, troubleshootingKeywords)
+    },
+    {
+      type: "definition",
+      score: countKeywordMatches(target, ["とは", "意味", "概要", "基本"])
+    }
+  ];
+
+  const [best] = candidates.sort((a, b) => b.score - a.score);
+  return best && best.score > 0 ? best.type : "general";
+}
+
+function getSearchIntentLabel(intent: SearchIntentType): string {
+  const labels: Record<SearchIntentType, string> = {
+    definition: "定義・概要型",
+    howTo: "方法・手順型",
+    comparison: "比較・選定型",
+    price: "料金・費用型",
+    local: "地域・ローカル型",
+    troubleshooting: "課題解決型",
+    general: "一般情報型"
+  };
+
+  return labels[intent];
 }
 
 function scoreTextLength(length: number): RuleScore {
@@ -102,7 +198,7 @@ function scoreHeadingCount(headings: string[]): RuleScore {
     comment:
       count === 0
         ? "MarkdownまたはHTMLの見出しが見つかりませんでした。"
-        : `${count}個の見出しを検出しました。見出しで論点を分けると引用されやすくなります。`
+        : `${count}個の見出しを検出しました。見出しで論点を分けるほど引用されやすくなります。`
   };
 }
 
@@ -135,9 +231,7 @@ function scoreIntroConclusion(text: string): RuleScore {
 }
 
 function scoreBullets(text: string): RuleScore {
-  const markdownBullets = /^(\s*[-*]\s+|\s*・).+$/gm.test(text);
-  const htmlLists = /<li[\s>]/i.test(text);
-  const found = markdownBullets || htmlLists;
+  const found = /^(\s*[-*]\s+|\s*・).+$/gm.test(text) || /<li[\s>]/i.test(text);
 
   return {
     item: "箇条書き",
@@ -149,9 +243,7 @@ function scoreBullets(text: string): RuleScore {
 }
 
 function scoreTables(text: string): RuleScore {
-  const markdownTable = /^\s*\|.+\|\s*$/m.test(text);
-  const htmlTable = /<table[\s>]/i.test(text);
-  const found = markdownTable || htmlTable;
+  const found = /^\s*\|.+\|\s*$/m.test(text) || /<table[\s>]/i.test(text);
 
   return {
     item: "表",
@@ -166,41 +258,41 @@ function scoreFaq(text: string): RuleScore {
   const found = hasAnyKeyword(text, faqKeywords);
 
   return {
-    item: "FAQ・Q&A本文構造",
+    item: "FAQ・Q&A構造",
     score: found ? 10 : 2,
     comment: found
-      ? "FAQまたは質問形式の要素を検出しました。FAQリッチリザルト目的ではなく、AI検索が質問と回答の対応関係を理解しやすくする本文構造として評価します。"
-      : "FAQ要素が見つかりませんでした。FAQリッチリザルト目的ではなく、読者の疑問に答えるQ&A本文構造を追加するとAI検索向けに改善できます。"
+      ? "FAQまたは質問形式の要素を検出しました。AIが質問と回答の関係を理解しやすい構造です。"
+      : "FAQ要素が見つかりませんでした。読者の疑問に答えるQ&Aを追加すると改善できます。"
   };
 }
 
 function scoreEvidence(text: string): RuleScore {
-  const matchedCount = evidenceKeywords.filter((keyword) =>
-    text.includes(keyword)
+  const keywordCount = countKeywordMatches(text, evidenceKeywords);
+  const strongEvidenceCount = strongEvidencePatterns.filter((pattern) =>
+    pattern.test(text)
   ).length;
+  const score = clampScore(keywordCount * 1.2 + strongEvidenceCount * 2);
 
   return {
     item: "根拠・一次情報",
-    score: clampScore(matchedCount * 2),
+    score,
     comment:
-      matchedCount === 0
-        ? "根拠や出典を示す語句が見つかりませんでした。"
-        : `${matchedCount}種類の根拠関連語句を検出しました。公式情報や出典リンクを明示するとさらに強くなります。`
+      score >= 7
+        ? "出典、公式情報、データなど信頼性を補強する要素があります。"
+        : "根拠や出典を示す要素が弱い状態です。公式情報、統計、調査年、引用URLを追加すると改善できます。"
   };
 }
 
 function scoreEeat(text: string): RuleScore {
-  const matchedCount = eeatKeywords.filter((keyword) =>
-    text.includes(keyword)
-  ).length;
+  const matchedCount = countKeywordMatches(text, eeatKeywords);
 
   return {
     item: "E-E-A-T要素",
-    score: clampScore(matchedCount * 2),
+    score: clampScore(matchedCount * 1.8),
     comment:
       matchedCount === 0
-        ? "経験、専門性、実績を示す語句が見つかりませんでした。"
-        : `${matchedCount}種類のE-E-A-T関連語句を検出しました。`
+        ? "経験、専門性、実績、監修などを示す要素が見つかりませんでした。"
+        : `${matchedCount}種類のE-E-A-T関連要素を検出しました。`
   };
 }
 
@@ -219,14 +311,175 @@ function scoreStructuredElements(text: string): RuleScore {
     score: clampScore(matchedCount * 2),
     comment:
       matchedCount === 0
-        ? "表、Q&A、箇条書きなど、AIが本文構造を把握しやすい要素が不足しています。"
-        : `${matchedCount}種類の構造化しやすい要素を検出しました。FAQPageリッチリザルトではなく、本文理解を助ける構造として評価します。`
+        ? "表、Q&A、箇条書きなど、本文構造を把握しやすい要素が不足しています。"
+        : `${matchedCount}種類の構造化しやすい要素を検出しました。`
+  };
+}
+
+function scoreSearchIntentFit(intent: SearchIntentType, text: string): RuleScore {
+  const hasTable = /^\s*\|.+\|\s*$/m.test(text) || /<table[\s>]/i.test(text);
+  const hasBullets = /^(\s*[-*]\s+|\s*・).+$/gm.test(text) || /<li[\s>]/i.test(text);
+  const hasFaq = hasAnyKeyword(text, faqKeywords);
+  const hasEvidence = countKeywordMatches(text, evidenceKeywords) > 0;
+  const hasArea = countKeywordMatches(text, localKeywords) > 0;
+  const hasPrice = countKeywordMatches(text, priceKeywords) > 0;
+  const hasHowTo = countKeywordMatches(text, howToKeywords) > 0;
+  const hasTrouble = countKeywordMatches(text, troubleshootingKeywords) > 0;
+
+  const intentChecks: Record<SearchIntentType, boolean[]> = {
+    definition: [hasFaq, hasEvidence, hasBullets],
+    howTo: [hasHowTo, hasBullets, hasFaq],
+    comparison: [hasTable, hasBullets, hasEvidence],
+    price: [hasPrice, hasTable, hasEvidence],
+    local: [hasArea, hasEvidence, hasFaq],
+    troubleshooting: [hasTrouble, hasHowTo, hasBullets],
+    general: [hasFaq, hasBullets, hasEvidence]
+  };
+  const matchedCount = intentChecks[intent].filter(Boolean).length;
+
+  return {
+    item: "検索意図タイプ適合",
+    score: clampScore(matchedCount * 3.3),
+    comment: `${getSearchIntentLabel(intent)}として判定しました。この意図に必要な構成要素は${matchedCount}/3個そろっています。`
+  };
+}
+
+function scoreEvidenceQuality(text: string): RuleScore {
+  const keywordCount = countKeywordMatches(text, evidenceKeywords);
+  const strongEvidenceCount = strongEvidencePatterns.filter((pattern) =>
+    pattern.test(text)
+  ).length;
+  const score = clampScore(keywordCount + strongEvidenceCount * 2.5);
+
+  return {
+    item: "根拠の質",
+    score,
+    comment:
+      score >= 7
+        ? "根拠の存在だけでなく、URL、年次、数値など検証しやすい情報が含まれています。"
+        : "根拠キーワードだけでなく、公式URL、調査年、数値、一次資料名を明記すると精度が上がります。"
+  };
+}
+
+function scoreAnswerability(text: string, headings: string[]): RuleScore {
+  const paragraphs = getParagraphs(text);
+  const conciseAnswerBlocks = paragraphs.filter((paragraph) => {
+    const length = paragraph.length;
+    return (
+      length >= 60 &&
+      length <= 260 &&
+      hasAnyKeyword(paragraph, conclusionKeywords)
+    );
+  }).length;
+  const questionHeadingCount = headings.filter((heading) =>
+    hasAnyKeyword(heading, questionHeadingKeywords)
+  ).length;
+  const score = clampScore(conciseAnswerBlocks * 2 + questionHeadingCount * 1.5);
+
+  return {
+    item: "回答可能性",
+    score,
+    comment:
+      score >= 7
+        ? "見出しや短い回答ブロックから、AIが回答を作りやすい構造になっています。"
+        : "見出し直下に60〜260文字程度の結論ブロックを置くと、AIが回答に使いやすくなります。"
+  };
+}
+
+function scoreQueryCoverage(intent: SearchIntentType, text: string, headings: string[]): RuleScore {
+  const questionCount = headings.filter((heading) =>
+    hasAnyKeyword(heading, questionHeadingKeywords)
+  ).length;
+  const faqCount = (text.match(/Q[.：]/g) ?? []).length;
+  const relatedTopicCount = countKeywordMatches(text, [
+    ...comparisonKeywords,
+    ...priceKeywords,
+    ...howToKeywords,
+    ...troubleshootingKeywords,
+    "注意点",
+    "失敗",
+    "代替",
+    "メリット",
+    "デメリット"
+  ]);
+  const intentBonus = intent === "general" ? 0 : 1;
+  const score = clampScore(questionCount * 1.5 + faqCount + relatedTopicCount * 0.5 + intentBonus);
+
+  return {
+    item: "想定質問カバー率",
+    score,
+    comment:
+      score >= 7
+        ? "関連質問や周辺トピックを複数カバーしています。"
+        : "関連質問、注意点、比較、料金、手順などの周辺トピックを増やすと改善できます。"
+  };
+}
+
+function buildSchemaSuggestions(text: string, intent: SearchIntentType): string[] {
+  const suggestions = new Set<string>(["Article"]);
+
+  if (hasAnyKeyword(text, faqKeywords)) {
+    suggestions.add("FAQPage");
+  }
+
+  if (intent === "howTo" || countKeywordMatches(text, howToKeywords) >= 2) {
+    suggestions.add("HowTo");
+  }
+
+  if (intent === "local" || countKeywordMatches(text, localKeywords) >= 2) {
+    suggestions.add("LocalBusiness");
+  }
+
+  if (intent === "comparison" || /^\s*\|.+\|\s*$/m.test(text)) {
+    suggestions.add("比較表・ItemList");
+  }
+
+  return Array.from(suggestions);
+}
+
+function buildDiagnosticInsights(
+  text: string,
+  headings: string[],
+  intent: SearchIntentType,
+  evidenceQualityScore: number,
+  answerabilityScore: number,
+  queryCoverageScore: number
+): DiagnosticInsight {
+  const comments: string[] = [
+    `検索意図は「${getSearchIntentLabel(intent)}」として判定しました。`
+  ];
+
+  if (answerabilityScore < 7) {
+    comments.push("見出し直下に短い結論ブロックを追加すると、AIが回答に使いやすくなります。");
+  }
+
+  if (evidenceQualityScore < 7) {
+    comments.push("公式URL、調査年、数値、一次資料名を明記すると根拠の質が上がります。");
+  }
+
+  if (queryCoverageScore < 7) {
+    comments.push("関連質問、比較、注意点、料金、代替案などの周辺トピックを増やす余地があります。");
+  }
+
+  return {
+    searchIntent: intent,
+    searchIntentLabel: getSearchIntentLabel(intent),
+    answerabilityScore,
+    evidenceQualityScore,
+    queryCoverageScore,
+    schemaSuggestions: buildSchemaSuggestions(text, intent),
+    comments
   };
 }
 
 export function analyzeRules(text: string): RuleAnalysis {
   const normalizedText = text.trim();
   const headings = extractHeadings(normalizedText);
+  const searchIntent = detectSearchIntent(normalizedText, headings);
+  const searchIntentFit = scoreSearchIntentFit(searchIntent, normalizedText);
+  const evidenceQuality = scoreEvidenceQuality(normalizedText);
+  const answerability = scoreAnswerability(normalizedText, headings);
+  const queryCoverage = scoreQueryCoverage(searchIntent, normalizedText, headings);
   const ruleScores = [
     scoreTextLength(normalizedText.length),
     scoreHeadingCount(headings),
@@ -238,12 +491,10 @@ export function analyzeRules(text: string): RuleAnalysis {
     scoreEvidence(normalizedText),
     scoreEeat(normalizedText),
     scoreStructuredElements(normalizedText),
-    scoreAiOverviewOfficialGuidance(normalizedText),
-    scoreHowToStructure(normalizedText),
-    scoreOriginalityAndPrimaryValue(normalizedText),
-    scoreSeoAioBalance(normalizedText),
-    scoreIntroKeyPointsAndEvidence(normalizedText),
-    scoreAlternativesAndExceptions(normalizedText)
+    searchIntentFit,
+    evidenceQuality,
+    answerability,
+    queryCoverage
   ];
 
   const totalScore = Math.round(
@@ -254,6 +505,14 @@ export function analyzeRules(text: string): RuleAnalysis {
 
   return {
     totalScore,
-    ruleScores
+    ruleScores,
+    diagnosticInsights: buildDiagnosticInsights(
+      normalizedText,
+      headings,
+      searchIntent,
+      evidenceQuality.score,
+      answerability.score,
+      queryCoverage.score
+    )
   };
 }

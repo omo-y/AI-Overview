@@ -118,6 +118,7 @@ export async function POST(request: Request) {
   const response: AnalysisResult = {
     totalScore: ruleAnalysis.totalScore,
     ruleScores: ruleAnalysis.ruleScores,
+    diagnosticInsights: ruleAnalysis.diagnosticInsights,
     ...llmResult.data,
     llmStatus: llmResult.status,
     sourceType,

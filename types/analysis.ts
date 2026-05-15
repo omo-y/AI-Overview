@@ -4,6 +4,25 @@ export type RuleScore = {
   comment: string;
 };
 
+export type SearchIntentType =
+  | "definition"
+  | "howTo"
+  | "comparison"
+  | "price"
+  | "local"
+  | "troubleshooting"
+  | "general";
+
+export type DiagnosticInsight = {
+  searchIntent: SearchIntentType;
+  searchIntentLabel: string;
+  answerabilityScore: number;
+  evidenceQualityScore: number;
+  queryCoverageScore: number;
+  schemaSuggestions: string[];
+  comments: string[];
+};
+
 export type FaqIdea = {
   question: string;
   answer: string;
@@ -20,6 +39,7 @@ export type LlmResult = {
 export type AnalysisResult = LlmResult & {
   totalScore: number;
   ruleScores: RuleScore[];
+  diagnosticInsights: DiagnosticInsight;
   llmStatus: "success" | "fallback";
   llmError?: string;
   sourceType: "text" | "url";
