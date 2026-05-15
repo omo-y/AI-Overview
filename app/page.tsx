@@ -1410,6 +1410,9 @@ export default function Home() {
                             {result.aioQueryResearch.aiOverviewCount} /{" "}
                             {result.aioQueryResearch.checkedCount}件
                           </p>
+                          <p className="mt-2 text-xs leading-5 text-muted">
+                            実測したクエリのうち、検索結果にAI Overviewが表示された割合です。
+                          </p>
                         </div>
                         <div className="rounded-lg border border-line bg-slate-50 p-4">
                           <p className="text-xs font-semibold text-muted">
@@ -1422,6 +1425,9 @@ export default function Home() {
                             {result.aioQueryResearch.ownSiteCitationCount} /{" "}
                             {result.aioQueryResearch.checkedCount}件
                           </p>
+                          <p className="mt-2 text-xs leading-5 text-muted">
+                            AI Overview内で診断対象サイトが引用・参照された割合です。
+                          </p>
                         </div>
                         <div className="rounded-lg border border-line bg-slate-50 p-4">
                           <p className="text-xs font-semibold text-muted">
@@ -1432,6 +1438,9 @@ export default function Home() {
                           </p>
                           <p className="mt-1 text-xs text-muted">
                             実測上限は環境変数で調整できます
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-muted">
+                            記事内容から抽出した候補です。編集後のクエリだけ実測します。
                           </p>
                         </div>
                       </div>
