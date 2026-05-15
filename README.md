@@ -17,6 +17,7 @@ URLまたは本文を入力すると、AI OverviewやAI検索で引用されや�
 - 月間診断回数制限
 - URL診断のSSRF対策
 - パスワードリセット
+- 管理者用の今月分診断回数リセット
 
 ## 必要なもの
 
@@ -61,6 +62,7 @@ curl http://localhost:11434/api/tags
 4. SQL Editorで `supabase/schema.sql` の内容を実行する
 5. Table Editorで `diagnosis_histories` が作成されたことを確認する
 6. Table Editorで `usage_events` が作成されたことを確認する
+7. Table Editorで `profiles` が作成されたことを確認する
 
 パスワードリセットをローカルで確認する場合は、Authentication > URL Configuration で以下も許可してください。
 
@@ -115,6 +117,20 @@ http://localhost:3000
 MONTHLY_DIAGNOSIS_LIMIT=10
 ```
 
+## 管理者の設定
+
+管理者にしたいユーザーのIDを Supabase の `auth.users` で確認し、SQL Editorで以下を実行します。
+
+```sql
+insert into profiles (user_id, role)
+values ('ここにユーザーID', 'admin')
+on conflict (user_id) do update set role = 'admin';
+```
+
+管理者としてログインすると、画面上の「今月の診断回数」に **自分の今月分をリセット** ボタンが表示されます。
+
+このボタンは、ログイン中の管理者本人の今月分 `usage_events` だけを削除します。診断履歴は削除されません。
+
 ## URL診断のSSRF対策
 
 URL診断では以下をブロックします。
@@ -142,6 +158,10 @@ URL診断では以下をブロックします。
 ### 利用回数の取得に失敗する
 
 `usage_events` テーブルが作成されていない可能性があります。SQL Editorで `supabase/schema.sql` を実行してください。
+
+### リセットボタンが表示されない
+
+`profiles` テーブルにログイン中ユーザーの `role = admin` が設定されているか確認してください。
 
 ### Ollamaに接続できない
 
@@ -179,6 +199,12 @@ app/
         route.ts
     usage/
       route.ts
+    admin/
+      me/
+        route.ts
+      usage/
+        reset/
+          route.ts
 lib/
   aiOverviewKnowledge.ts
   ollama.ts

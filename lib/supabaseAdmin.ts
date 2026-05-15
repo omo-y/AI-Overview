@@ -16,6 +16,12 @@ type SupabaseUsageRow = {
   created_at: string;
 };
 
+type SupabaseProfileRow = {
+  user_id: string;
+  role: "user" | "admin";
+  created_at: string;
+};
+
 export type HistoryResponseItem = {
   id: number;
   createdAt: string;
@@ -47,6 +53,7 @@ type InsertHistoryInput = {
 const HISTORY_SELECT =
   "id,user_id,created_at,input_preview,source_url,total_score,summary,is_public";
 const USAGE_SELECT = "id,user_id,action,created_at";
+const PROFILE_SELECT = "user_id,role,created_at";
 const DEFAULT_MONTHLY_DIAGNOSIS_LIMIT = 10;
 const USAGE_TABLE_MISSING_MESSAGE =
   "利用回数テーブルが未作成です。診断は実行できますが、月間回数制限はまだ有効ではありません。";
@@ -56,9 +63,7 @@ function getSupabaseConfig() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {
-    throw new Error(
-      "Supabase設定が不足しています。.env.local を確認してください。"
-    );
+    throw new Error("Supabase設定が不足しています。.env.local を確認してください。");
   }
 
   return {
@@ -301,4 +306,45 @@ export async function recordDiagnosisUsage(userId: string) {
 
     console.warn("[Usage record skipped because table is missing]", error);
   }
+}
+
+export async function getUserRole(userId: string) {
+  const query = new URLSearchParams({
+    select: PROFILE_SELECT,
+    user_id: `eq.${userId}`,
+    limit: "1"
+  });
+  const rows = await requestSupabase<SupabaseProfileRow[]>(
+    `/profiles?${query.toString()}`
+  );
+
+  return rows[0]?.role ?? "user";
+}
+
+export async function requireAdminRole(userId: string) {
+  const role = await getUserRole(userId);
+
+  if (role !== "admin") {
+    throw new Error("管理者権限が必要です。");
+  }
+
+  return role;
+}
+
+export async function resetCurrentMonthUsage(targetUserId?: string) {
+  const query = new URLSearchParams({
+    action: "eq.diagnosis",
+    created_at: `gte.${getCurrentMonthStart()}`
+  });
+
+  if (targetUserId) {
+    query.set("user_id", `eq.${targetUserId}`);
+  }
+
+  await requestSupabase<[]>(`/usage_events?${query.toString()}`, {
+    method: "DELETE",
+    headers: {
+      Prefer: "return=minimal"
+    }
+  });
 }

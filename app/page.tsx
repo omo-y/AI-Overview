@@ -65,6 +65,17 @@ type UsageResponse = {
   error?: string;
 };
 
+type AdminStatusResponse = {
+  isAdmin: boolean;
+  role: "user" | "admin";
+  error?: string;
+};
+
+type AdminResetResponse = {
+  message?: string;
+  error?: string;
+};
+
 const SESSION_STORAGE_KEY = "ai-overview-auth-session";
 
 const sampleText = `# AI Overviewに引用されやすい記事構造とは
@@ -245,6 +256,9 @@ export default function Home() {
   const [topSitesScope, setTopSitesScope] = useState<TopSitesScope>("mine");
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [usageNotice, setUsageNotice] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminMessage, setAdminMessage] = useState("");
+  const [isResettingUsage, setIsResettingUsage] = useState(false);
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -268,6 +282,8 @@ export default function Home() {
     setTopSites([]);
     setUsage(null);
     setUsageNotice("");
+    setIsAdmin(false);
+    setAdminMessage("");
     setResult(null);
   }, []);
 
@@ -539,6 +555,26 @@ export default function Home() {
     }
   }, [authHeaders]);
 
+  const loadAdminStatus = useCallback(async () => {
+    if (!authHeaders) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/admin/me", {
+        method: "GET",
+        headers: authHeaders,
+        cache: "no-store"
+      });
+      const data = (await response.json()) as AdminStatusResponse;
+
+      setIsAdmin(response.ok && data.isAdmin);
+    } catch (adminStatusError) {
+      console.error("[Admin status load failed]", adminStatusError);
+      setIsAdmin(false);
+    }
+  }, [authHeaders]);
+
   const loadHistory = useCallback(async () => {
     if (!authHeaders) {
       return;
@@ -596,8 +632,13 @@ export default function Home() {
   }, [authHeaders, topSitesScope]);
 
   const refreshHistoryViews = useCallback(async () => {
-    await Promise.all([loadHistory(), loadTopSites(), loadUsage()]);
-  }, [loadHistory, loadTopSites, loadUsage]);
+    await Promise.all([
+      loadHistory(),
+      loadTopSites(),
+      loadUsage(),
+      loadAdminStatus()
+    ]);
+  }, [loadAdminStatus, loadHistory, loadTopSites, loadUsage]);
 
   useEffect(() => {
     if (!session) {
@@ -651,6 +692,36 @@ export default function Home() {
       setHistoryError(
         "診断履歴の保存に失敗しました。診断結果は表示されていますが、履歴には残っていません。"
       );
+    }
+  }
+
+  async function handleResetMyMonthlyUsage() {
+    if (!authHeaders || !isAdmin) {
+      return;
+    }
+
+    setIsResettingUsage(true);
+    setAdminMessage("");
+
+    try {
+      const response = await fetch("/api/admin/usage/reset", {
+        method: "POST",
+        headers: authHeaders
+      });
+      const data = (await response.json()) as AdminResetResponse;
+
+      if (!response.ok) {
+        setAdminMessage(data.error ?? "診断回数のリセットに失敗しました。");
+        return;
+      }
+
+      setAdminMessage(data.message ?? "今月の診断回数をリセットしました。");
+      await loadUsage();
+    } catch (resetError) {
+      console.error("[Usage reset failed]", resetError);
+      setAdminMessage("診断回数のリセットに失敗しました。");
+    } finally {
+      setIsResettingUsage(false);
     }
   }
 
@@ -885,6 +956,23 @@ export default function Home() {
                   <p className="mt-2 text-xs leading-5 text-amber-700">
                     {usageNotice}
                   </p>
+                ) : null}
+                {isAdmin ? (
+                  <div className="mt-3 border-t border-line pt-3">
+                    <button
+                      type="button"
+                      onClick={handleResetMyMonthlyUsage}
+                      disabled={isResettingUsage}
+                      className="rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-ink transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isResettingUsage ? "リセット中..." : "自分の今月分をリセット"}
+                    </button>
+                    {adminMessage ? (
+                      <p className="mt-2 text-xs leading-5 text-muted">
+                        {adminMessage}
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
