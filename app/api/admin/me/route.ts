@@ -19,9 +19,7 @@ export async function GET(request: Request) {
         isAdmin: false,
         role: "user",
         error:
-          error instanceof Error
-            ? error.message
-            : "管理者権限の確認に失敗しました。"
+          "管理者権限の確認に失敗しました。Supabase設定とprofilesテーブルを確認してください。"
       },
       { status: 500 }
     );

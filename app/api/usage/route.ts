@@ -16,9 +16,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "利用回数の取得に失敗しました。"
+          "利用回数の取得に失敗しました。Supabase設定とusage_eventsテーブルを確認してください。"
       },
       { status: 500 }
     );

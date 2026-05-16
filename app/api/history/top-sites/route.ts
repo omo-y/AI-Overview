@@ -36,9 +36,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+          "高スコアサイト5選の取得に失敗しました。Supabase設定とテーブルを確認してください。"
       },
       { status: 500 }
     );

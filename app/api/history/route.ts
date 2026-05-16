@@ -37,9 +37,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
+          "診断履歴の取得に失敗しました。Supabase設定とテーブルを確認してください。"
       },
       { status: 500 }
     );
@@ -72,7 +70,7 @@ export async function POST(request: Request) {
     body.totalScore > 100
   ) {
     return NextResponse.json(
-      { error: "総合スコアは0〜100の数値で送信してください。" },
+      { error: "総合スコアは0から100の数値で送信してください。" },
       { status: 400 }
     );
   }
@@ -108,9 +106,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "診断履歴の保存に失敗しました。診断結果は表示されていますが、履歴には残っていません。"
+          "診断履歴の保存に失敗しました。診断結果は表示されていますが、履歴には残っていません。Supabase設定とテーブルを確認してください。"
       },
       { status: 500 }
     );

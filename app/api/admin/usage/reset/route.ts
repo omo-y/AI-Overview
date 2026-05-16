@@ -33,9 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "診断回数のリセットに失敗しました。"
+          "診断回数のリセットに失敗しました。管理者権限とusage_eventsテーブルを確認してください。"
       },
       { status: 403 }
     );

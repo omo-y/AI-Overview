@@ -35,6 +35,9 @@ export type AioQueryCheck = {
 export type AioQueryResearch = {
   status: "success" | "partial" | "skipped";
   message: string;
+  persistenceStatus?: "success" | "failed";
+  persistenceError?: string;
+  savedAt?: string;
   generatedQueries: string[];
   checkedCount: number;
   aiOverviewCount: number;

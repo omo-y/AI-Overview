@@ -1,3 +1,5 @@
+import type { AioQueryCheck, AioQueryResearch } from "@/types/analysis";
+
 type SupabaseHistoryRow = {
   id: number;
   user_id: string | null;
@@ -31,6 +33,21 @@ type SupabaseAuthUser = {
 
 type SupabaseAuthUsersResponse = {
   users?: SupabaseAuthUser[];
+};
+
+type SupabaseAioQueryResearchRow = {
+  id: number;
+  user_id: string;
+  source_url: string | null;
+  created_at: string;
+  generated_queries: string[];
+  checked_count: number;
+  ai_overview_count: number;
+  ai_overview_rate: number;
+  own_site_citation_count: number;
+  own_site_citation_rate: number;
+  cited_urls: string[];
+  checks: AioQueryCheck[];
 };
 
 export type HistoryResponseItem = {
@@ -69,6 +86,17 @@ type InsertHistoryInput = {
   isPublic: boolean;
 };
 
+type InsertAioQueryResearchInput = {
+  userId: string;
+  sourceUrl: string | null;
+  research: AioQueryResearch;
+};
+
+export type AioQueryResearchSaveResult = {
+  id: number;
+  createdAt: string;
+};
+
 const HISTORY_SELECT =
   "id,user_id,created_at,input_preview,source_url,total_score,summary,is_public";
 const USAGE_SELECT = "id,user_id,action,created_at";
@@ -82,9 +110,7 @@ function getSupabaseConfig() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {
-    throw new Error(
-      "Supabase設定が不足しています。.env.local を確認してください。"
-    );
+    throw new Error("Supabase設定が不足しています。.env.local を確認してください。");
   }
 
   return {
@@ -225,15 +251,48 @@ export async function createHistory(input: InsertHistoryInput) {
   return toHistoryResponse(rows[0]);
 }
 
+export async function createAioQueryResearch(
+  input: InsertAioQueryResearchInput
+): Promise<AioQueryResearchSaveResult> {
+  const rows = await requestSupabase<SupabaseAioQueryResearchRow[]>(
+    "/aio_query_researches",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        user_id: input.userId,
+        source_url: input.sourceUrl,
+        generated_queries: input.research.generatedQueries,
+        checked_count: input.research.checkedCount,
+        ai_overview_count: input.research.aiOverviewCount,
+        ai_overview_rate: input.research.aiOverviewRate,
+        own_site_citation_count: input.research.ownSiteCitationCount,
+        own_site_citation_rate: input.research.ownSiteCitationRate,
+        cited_urls: input.research.citedUrls,
+        checks: input.research.checks
+      })
+    }
+  );
+
+  if (!rows[0]) {
+    throw new Error("Supabaseから保存後のAI Overview実測結果が返されませんでした。");
+  }
+
+  return {
+    id: rows[0].id,
+    createdAt: rows[0].created_at
+  };
+}
+
 export async function findTopSiteHistories(
   limit: number,
   scope: "mine" | "public",
   userId?: string
 ) {
   if (scope === "mine" && !userId) {
-    throw new Error(
-      "自分の高スコアサイト取得にはログインユーザーIDが必要です。"
-    );
+    throw new Error("自分の高スコアサイト取得にはログインユーザーIDが必要です。");
   }
 
   const query = new URLSearchParams({
@@ -324,7 +383,7 @@ export async function assertDiagnosisUsageAvailable(userId: string) {
 
   if (usage.remainingThisMonth <= 0) {
     throw new Error(
-      `今月の診断回数上限（${usage.monthlyLimit}回）に達しました。来月になると再度診断できます。`
+      `今月の診断回数上限（${usage.monthlyLimit}回）に達しました。翌月になると再度診断できます。`
     );
   }
 

@@ -17,9 +17,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "管理者用ユーザー一覧の取得に失敗しました。"
+          "管理者用ユーザー一覧の取得に失敗しました。管理者権限とSupabase設定を確認してください。"
       },
       { status: 403 }
     );

@@ -1402,6 +1402,18 @@ export default function Home() {
                       <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
                         {result.aioQueryResearch.message}
                       </p>
+                      {result.aioQueryResearch.persistenceStatus === "failed" &&
+                      result.aioQueryResearch.persistenceError ? (
+                        <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                          {result.aioQueryResearch.persistenceError}
+                        </p>
+                      ) : null}
+                      {result.aioQueryResearch.persistenceStatus === "success" &&
+                      result.aioQueryResearch.savedAt ? (
+                        <p className="mt-3 text-xs font-semibold text-emerald-700">
+                          実測結果をSupabaseに保存しました。
+                        </p>
+                      ) : null}
                       <div className="mt-4">
                         <label
                           htmlFor="aio-query-input"

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { researchAiOverviewQueries } from "@/lib/aioQueryResearch";
-import { requireAuthenticatedUser } from "@/lib/supabaseAuth";
+import { createAioQueryResearch } from "@/lib/supabaseAdmin";
+import {
+  requireAuthenticatedUser,
+  type AuthenticatedUser
+} from "@/lib/supabaseAuth";
 import type { AioQueryResearch } from "@/types/analysis";
 
 type AioResearchRequestBody = {
@@ -13,8 +17,10 @@ type AioResearchErrorResponse = {
 };
 
 export async function POST(request: Request) {
+  let user: AuthenticatedUser;
+
   try {
-    await requireAuthenticatedUser(request);
+    user = await requireAuthenticatedUser(request);
   } catch (error) {
     return NextResponse.json<AioResearchErrorResponse>(
       {
@@ -63,5 +69,26 @@ export async function POST(request: Request) {
       : undefined;
   const research = await researchAiOverviewQueries(queries, sourceUrl);
 
-  return NextResponse.json<AioQueryResearch>(research);
+  try {
+    const saved = await createAioQueryResearch({
+      userId: user.id,
+      sourceUrl: sourceUrl ?? null,
+      research
+    });
+
+    return NextResponse.json<AioQueryResearch>({
+      ...research,
+      persistenceStatus: "success",
+      savedAt: saved.createdAt
+    });
+  } catch (error) {
+    console.error("[AIO query research save failed]", error);
+
+    return NextResponse.json<AioQueryResearch>({
+      ...research,
+      persistenceStatus: "failed",
+      persistenceError:
+        "AI Overview実測結果のDB保存に失敗しました。実測結果は表示されていますが、履歴には残っていません。"
+    });
+  }
 }
